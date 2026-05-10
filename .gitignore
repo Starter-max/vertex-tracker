@@ -1,0 +1,7 @@
+.env
+projects/*/data/
+logs/
+obsidian-vault/
+*.pyc
+__pycache__/
+.DS_Store
