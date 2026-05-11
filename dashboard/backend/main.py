@@ -8,12 +8,35 @@ from datetime import datetime
 import asyncpg, psutil, subprocess, asyncio, os, uuid, httpx, redis.asyncio as aioredis
 from dotenv import load_dotenv
 
-load_dotenv("/Volumes/256/digital-corp/core/.env")
+load_dotenv("/Users/admin/workspace/digital-corp/core/.env")
 DB = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@localhost:5432/{os.getenv('POSTGRES_DB')}"
-FRONTEND = Path("/Volumes/256/digital-corp/dashboard/frontend/index.html")
-UPLOADS = Path("/Volumes/256/digital-corp/dashboard/uploads")
+FRONTEND = Path("/Users/admin/workspace/digital-corp/dashboard/frontend/index.html")
+UPLOADS = Path("/Users/admin/workspace/digital-corp/dashboard/uploads")
 UPLOADS.mkdir(exist_ok=True)
 pool = None
+
+async def ensure_seeded():
+    async with pool.acquire() as c:
+        await c.execute("""
+            INSERT INTO projects(id,name,type,status,budget_daily,budget_monthly)
+            VALUES ('p04','Mental Flow System','personal','active',2.50,60.00)
+            ON CONFLICT (id) DO NOTHING
+        """)
+        await c.execute("""
+            INSERT INTO agents(id,project_id,name,role,status)
+            VALUES
+              ('p04-owner','p04','Owner','manager','configured'),
+              ('p04-capture','p04','Capture Bot','capture','configured'),
+              ('p04-review','p04','Review Bot','review','configured')
+            ON CONFLICT (id) DO NOTHING
+        """)
+        await c.execute("""
+            INSERT INTO kanban_cards(id,title,description,card_type,layer,project_id,agent_id,status,priority,tags)
+            VALUES
+              ('p04-sys-001','Mental Flow System MVP','Build the personal mental-flow app with capture, review, buckets, settings, admin users and Claude sorting.','feature','strategic','p04',NULL,'in_progress','P1',ARRAY['nextjs','pwa','claude']),
+              ('p04-sys-002','Telegram admin bot','Add user management, edit flows, and owner onboarding for the bot.','feature','operational','p04',NULL,'planned','P1',ARRAY['telegram','admin'])
+            ON CONFLICT (id) DO NOTHING
+        """)
 
 class WsManager:
     def __init__(self): self.active = []
@@ -32,6 +55,7 @@ wsman = WsManager()
 async def lifespan(app):
     global pool
     pool = await asyncpg.create_pool(DB, min_size=2, max_size=10)
+    await ensure_seeded()
     yield
     await pool.close()
 
@@ -86,9 +110,10 @@ async def get_project(pid: str):
             GROUP BY agent_id ORDER BY usd DESC
         """, pid)
         total = await c.fetchval("SELECT ROUND(SUM(cost_usd)::numeric,6) FROM costs WHERE project_id=$1 AND created_at > NOW()-INTERVAL '24h'", pid)
-    log_path = Path(f"/Volumes/256/digital-corp/logs/{pid}.log")
+        all_agents = await c.fetch("SELECT id, project_id, name, role, status, last_heartbeat FROM agents WHERE project_id=$1 ORDER BY id", pid)
+    log_path = Path(f"/Users/admin/workspace/digital-corp/logs/{pid}.log")
     logs = "\n".join(log_path.read_text().splitlines()[-40:]) if log_path.exists() else "нет логов"
-    return {**dict(p), "cost_today": float(total or 0), "agents": [dict(a) for a in agents], "logs": logs}
+    return {**dict(p), "cost_today": float(total or 0), "agents": [dict(a) for a in agents], "project_agents": [dict(a) for a in all_agents], "logs": logs}
 
 @app.post("/api/projects/{pid}/pause")
 async def pause_proj(pid: str):
@@ -147,8 +172,8 @@ async def get_knowledge():
 async def refresh_knowledge():
     subprocess.Popen([
         "python3.12",
-        "/Volumes/256/digital-corp/agents/a06-research/research_agent.py",
-    ], stdout=open("/Volumes/256/digital-corp/logs/a06.log", "a"), stderr=subprocess.STDOUT)
+        "/Users/admin/workspace/digital-corp/agents/a06-research/research_agent.py",
+    ], stdout=open("/Users/admin/workspace/digital-corp/logs/a06.log", "a"), stderr=subprocess.STDOUT)
     return {"ok": True}
 
 from typing import Optional, List
