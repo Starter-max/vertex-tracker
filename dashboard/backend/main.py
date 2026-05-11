@@ -345,8 +345,6 @@ async def agents_room():
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-
 @app.get("/api/agents")
 async def get_agents(project_id: str = None):
     async with pool.acquire() as c:
@@ -412,6 +410,119 @@ class InboxEventBody(BaseModel):
     error_summary: Optional[str] = None
     metadata: dict = {}
 
+class InboxRouteBody(BaseModel):
+    message: str
+    source: str = "dashboard"
+    owner_id: Optional[str] = None
+
+RISK_WORDS = ("удали", "delete", "drop", "truncate", "внешний доступ", "деплой", "deploy", ".env", "секрет", "ключ")
+
+def normalize_priority(text: str) -> str:
+    t = text.lower()
+    if any(w in t for w in ("срочно", "немедленно", "критично", "p0")):
+        return "P0"
+    if any(w in t for w in ("важно", "p1")):
+        return "P1"
+    if any(w in t for w in ("потом", "низкий", "p3")):
+        return "P3"
+    return "P2"
+
+def normalize_status(text: str) -> Optional[str]:
+    t = text.lower()
+    if any(w in t for w in ("готово", "done", "заверш", "закры")):
+        return "done"
+    if any(w in t for w in ("в работу", "работе", "in_progress", "делать")):
+        return "in_progress"
+    if any(w in t for w in ("замороз", "frozen")):
+        return "frozen"
+    if any(w in t for w in ("блок", "blocked")):
+        return "blocked"
+    if any(w in t for w in ("план", "planned")):
+        return "planned"
+    return None
+
+def classify_owner_message(text: str) -> dict:
+    t = (text or "").strip().lower()
+    priority = normalize_priority(t)
+    if not t:
+        return {"intent_class": "UNKNOWN", "priority": priority, "risk_level": "low", "requires_approval": False}
+    risky = any(w in t for w in RISK_WORDS)
+    if t.startswith(("/с", "/статус")) or "статус" in t or "что с системой" in t:
+        intent = "SYSTEM_STATUS"
+    elif " и " in t and any(w in t for w in ("расход", "завис", "статус", "канбан")):
+        intent = "COMPLEX"
+    elif t.startswith(("/б", "/бюджет")) or "расход" in t or "бюджет" in t or "потрати" in t:
+        intent = "COST_QUERY"
+    elif t.startswith(("/к", "/канбан")) or "канбан" in t or "что в работе" in t or "завис" in t:
+        intent = "KANBAN_VIEW"
+    elif t.startswith("/п ") or t.startswith("/поставь ") or "добавь задачу" in t or "поставь задачу" in t:
+        intent = "KANBAN_CREATE"
+    elif "перемести" in t or "поставь в работу" in t or "в готово" in t or "заморозь" in t:
+        intent = "KANBAN_MOVE"
+    elif t.startswith(("/г", "/гит")) or "что в гите" in t or "git" in t or "гит" in t:
+        intent = "GIT_STATUS"
+    elif t.startswith(("/з", "/знания")) or "знани" in t or "устарел" in t:
+        intent = "KNOWLEDGE_CHECK"
+    elif t.startswith("/инбокс"):
+        intent = "INBOX_VIEW"
+    elif t.startswith("/алерты"):
+        intent = "ALERTS_VIEW"
+    elif t.startswith("/долги"):
+        intent = "DEBTS_VIEW"
+    elif t in {"/д", "/день"} or t.startswith("/день ") or "бриф" in t:
+        intent = "MORNING_BRIEF_NOW"
+    elif t.startswith("/риск") or "это опасно" in t or "проверь риск" in t:
+        intent = "RISK_REVIEW"
+    elif risky:
+        intent = "RISK_REVIEW"
+    elif " и " in t and any(w in t for w in ("расход", "завис", "статус", "канбан")):
+        intent = "COMPLEX"
+    else:
+        intent = "UNKNOWN"
+    risk_level = "high" if risky else "low"
+    return {"intent_class": intent, "priority": priority, "risk_level": risk_level, "requires_approval": risky}
+
+def extract_task_title(text: str) -> str:
+    raw = (text or "").strip()
+    lowered = raw.lower()
+    prefixes = ["/п ", "добавь задачу", "поставь задачу", "поставь "]
+    for pref in prefixes:
+        if lowered.startswith(pref):
+            return raw[len(pref):].strip(" :-") or raw
+    return raw
+
+def extract_move_query(text: str) -> str:
+    raw = (text or "").strip()
+    t = raw.lower()
+    for token in ("перемести", "поставь"):
+        if t.startswith(token):
+            raw = raw[len(token):].strip(" :-")
+            t = raw.lower()
+    for sep in (" в готово", " в работу", " в done", " в in_progress", " в план", " в planned"):
+        idx = t.find(sep)
+        if idx > 0:
+            return raw[:idx].strip(" :-")
+    return raw[:120]
+
+async def insert_inbox_event_record(body: InboxEventBody, status: Optional[str] = None) -> tuple[str, Optional[str]]:
+    event_id = f"inbox_{uuid.uuid4().hex[:12]}"
+    if body.requires_approval and not body.approval_id:
+        body.approval_id = f"appr_{uuid.uuid4().hex[:10]}"
+    final_status = status or body.status
+    async with pool.acquire() as c:
+        await c.execute("""
+            INSERT INTO inbox_events
+            (event_id, source, source_message_id, owner_id, raw_text, normalized_intent, intent_class,
+             project_id, priority, risk_level, status, requires_approval, approval_id, agents_used,
+             skills_used, cost_usd, result_summary, error_summary, metadata, completed_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16,$17,$18,$19::jsonb,$20)
+        """, event_id, body.source, body.source_message_id, body.owner_id, body.raw_text, body.normalized_intent,
+             body.intent_class, body.project_id, body.priority, body.risk_level, final_status, body.requires_approval,
+             body.approval_id, json.dumps(body.agents_used, ensure_ascii=False), json.dumps(body.skills_used, ensure_ascii=False),
+             body.cost_usd, body.result_summary, body.error_summary, json.dumps(body.metadata, ensure_ascii=False, default=str),
+             datetime.now() if final_status == "completed" else None)
+    return event_id, body.approval_id
+
 async def write_redis_event(stream: str, payload: dict):
     r = aioredis.from_url(REDIS_URL, decode_responses=True)
     try:
@@ -421,21 +532,7 @@ async def write_redis_event(stream: str, payload: dict):
 
 @app.post("/api/inbox/events")
 async def create_inbox_event(body: InboxEventBody):
-    event_id = f"inbox_{uuid.uuid4().hex[:12]}"
-    if body.requires_approval and not body.approval_id:
-        body.approval_id = f"appr_{uuid.uuid4().hex[:10]}"
-    async with pool.acquire() as c:
-        await c.execute("""
-            INSERT INTO inbox_events
-            (event_id, source, source_message_id, owner_id, raw_text, normalized_intent, intent_class,
-             project_id, priority, risk_level, status, requires_approval, approval_id, agents_used,
-             skills_used, cost_usd, result_summary, error_summary, metadata)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16,$17,$18,$19::jsonb)
-        """, event_id, body.source, body.source_message_id, body.owner_id, body.raw_text, body.normalized_intent,
-             body.intent_class, body.project_id, body.priority, body.risk_level, body.status, body.requires_approval,
-             body.approval_id, json.dumps(body.agents_used, ensure_ascii=False), json.dumps(body.skills_used, ensure_ascii=False),
-             body.cost_usd, body.result_summary, body.error_summary, json.dumps(body.metadata, ensure_ascii=False))
-
+    event_id, approval_id = await insert_inbox_event_record(body)
     redis_payload = {
         "event_id": event_id,
         "source": body.source,
@@ -447,7 +544,7 @@ async def create_inbox_event(body: InboxEventBody):
         "priority": body.priority,
         "risk_level": body.risk_level,
         "requires_approval": body.requires_approval,
-        "approval_id": body.approval_id,
+        "approval_id": approval_id,
         "created_at": datetime.now().isoformat(),
     }
     stream_id = await write_redis_event("corp:inbox", redis_payload)
@@ -466,7 +563,182 @@ async def create_inbox_event(body: InboxEventBody):
             "event_id": event_id,
         })
     await wsman.broadcast({"type": "inbox_event", "event_id": event_id, "intent_class": body.intent_class, "status": body.status})
-    return {"ok": True, "event_id": event_id, "stream": "corp:inbox", "stream_id": stream_id, "approval_id": body.approval_id}
+    return {"ok": True, "event_id": event_id, "stream": "corp:inbox", "stream_id": stream_id, "approval_id": approval_id}
+
+async def build_morning_brief() -> tuple[str, dict]:
+    sys = await system_metrics()
+    costs = await costs_today()
+    async with pool.acquire() as c:
+        active = await c.fetchval("SELECT COUNT(*) FROM projects WHERE status='active'")
+        agents = await c.fetchval("SELECT COUNT(*) FROM agents")
+        work = await c.fetch("""
+            SELECT title,priority,status FROM kanban_cards
+            WHERE status IN ('in_progress','blocked')
+            ORDER BY priority,moved_at ASC LIMIT 3
+        """)
+        blocked = await c.fetch("""
+            SELECT title,priority,status FROM kanban_cards
+            WHERE status IN ('blocked','frozen')
+            ORDER BY priority,moved_at ASC LIMIT 3
+        """)
+    work_bullets = "\n".join([f"• [{r['priority']}] {r['title']} — {r['status']}" for r in work]) or "• критичных пунктов нет"
+    blocked_bullets = "\n".join([f"• [{r['priority']}] {r['title']} — {r['status']}" for r in blocked]) or "• нет"
+    text = (
+        f"🏛 Доброе утро. Корпорация.\n"
+        f"СИСТЕМА:\n"
+        f"• CPU {sys['cpu']}%, RAM {sys['ram_pct']}%\n"
+        f"• Расходы 24ч: ${costs['total']:.6f}\n"
+        f"• Активные проекты: {active}; агенты: {agents}\n"
+        f"В РАБОТЕ:\n{work_bullets}\n"
+        f"ЗАБЛОКИРОВАНО:\n{blocked_bullets}"
+    )
+    return text, {"system": sys, "costs": costs, "active_projects": active, "agents": agents, "blocked_count": len(blocked), "work_count": len(work)}
+
+@app.get("/api/inbox/morning-brief")
+async def inbox_morning_brief():
+    text, data = await build_morning_brief()
+    return {"ok": True, "brief": text, "data": data, "ts": datetime.now().isoformat()}
+
+@app.post("/api/inbox/route")
+async def route_inbox_message(body: InboxRouteBody):
+    message = body.message.strip()
+    cls = classify_owner_message(message)
+    intent = cls["intent_class"]
+    priority = cls["priority"]
+    risk_level = cls["risk_level"]
+    requires_approval = cls["requires_approval"]
+    response = ""
+    data = {}
+    status = "completed"
+    skills_used = ["master-router"]
+
+    if requires_approval:
+        response = "Нужно подтверждение.\nХочу: выполнить рискованное действие из сообщения.\nРиск: возможны данные/секреты/внешний доступ.\nЦена: н/д.\nОткат: зависит от действия.\nA — да, делай\nB — нет, отмени\nC — безопасный вариант"
+        status = "waiting_approval"
+    elif intent == "SYSTEM_STATUS":
+        sys = await system_metrics()
+        db_ok = True
+        data = {"system": sys}
+        response = f"Готово: система отвечает, CPU {sys['cpu']}%, RAM {sys['ram_pct']}%.\nДальше: ничего не нужно."
+    elif intent == "COST_QUERY":
+        costs = await costs_today()
+        data = costs
+        response = f"Готово: расходы за 24ч ${costs['total']:.6f}.\nДальше: ничего не нужно."
+    elif intent == "KANBAN_VIEW":
+        async with pool.acquire() as c:
+            rows = await c.fetch("""
+                SELECT id,title,status,priority,project_id,layer,moved_at
+                FROM kanban_cards
+                WHERE status IN ('in_progress','blocked','frozen')
+                ORDER BY priority, moved_at ASC LIMIT 12
+            """)
+        items = [dict(r) for r in rows]
+        data = {"items": items}
+        if items:
+            compact = "; ".join([f"[{i['priority']}] {i['title']} — {i['status']}" for i in items[:5]])
+            response = f"Готово: в фокусе {len(items)} задач. {compact}."
+        else:
+            response = "Готово: активных/заблокированных задач не найдено.\nДальше: можно поставить задачу через /п текст."
+        skills_used.append("kanban-aggregator")
+    elif intent == "KANBAN_CREATE":
+        title = extract_task_title(message)[:200]
+        cid = f"inbox-{uuid.uuid4().hex[:10]}"
+        layer = "strategic" if any(w in message.lower() for w in ("стратег", "цель", "видение")) else "operational"
+        async with pool.acquire() as c:
+            await c.execute("""
+                INSERT INTO kanban_cards (id,title,description,card_type,layer,project_id,status,priority,tags,metadata)
+                VALUES ($1,$2,$3,'task',$4,NULL,'planned',$5,$6,$7::jsonb)
+            """, cid, title, "Created by inbox master-router", layer, priority, ["inbox"], json.dumps({"source": body.source}, ensure_ascii=False))
+        data = {"card_id": cid, "title": title, "priority": priority, "layer": layer}
+        response = f"Готово: добавил задачу [{priority}] {title}.\nДальше: ничего не нужно."
+        skills_used.append("kanban-aggregator")
+    elif intent == "KANBAN_MOVE":
+        target_status = normalize_status(message) or "done"
+        query = extract_move_query(message)
+        async with pool.acquire() as c:
+            candidates = await c.fetch("""
+                SELECT id,title,status,priority FROM kanban_cards
+                WHERE lower(title) LIKE lower($1)
+                ORDER BY moved_at DESC LIMIT 5
+            """, f"%{query}%")
+            if len(candidates) == 1:
+                row = candidates[0]
+                await c.execute("UPDATE kanban_cards SET status=$1, moved_at=NOW(), updated_at=NOW() WHERE id=$2", target_status, row['id'])
+                data = {"card_id": row['id'], "title": row['title'], "status": target_status}
+                response = f"Готово: {row['title']} → {target_status}.\nДальше: ничего не нужно."
+            elif len(candidates) == 0:
+                response = f"Не нашёл карточку: {query}.\nДальше: уточни название."
+            else:
+                status = "waiting_approval"
+                options = "\n".join([f"{idx+1} — {r['title']} ({r['status']})" for idx, r in enumerate(candidates[:3])])
+                response = f"Нужно уточнение.\n{options}"
+                data = {"candidates": [dict(r) for r in candidates]}
+        skills_used.append("kanban-aggregator")
+    elif intent == "GIT_STATUS":
+        proc = await asyncio.create_subprocess_exec('git','status','--short', cwd='/Users/admin/workspace/digital-corp', stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        out, err = await proc.communicate()
+        proc2 = await asyncio.create_subprocess_exec('git','log','--oneline','-5', cwd='/Users/admin/workspace/digital-corp', stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        log, _ = await proc2.communicate()
+        changes = (out.decode().strip() or "чисто")
+        data = {"status": changes, "log": log.decode().strip()}
+        response = f"Готово: git status — {changes.splitlines()[0] if changes else 'чисто'}.\nДальше: ничего не нужно."
+    elif intent == "KNOWLEDGE_CHECK":
+        async with pool.acquire() as c:
+            rows = await c.fetch("SELECT name,status,freshness_score FROM knowledge_items WHERE status <> 'ok' ORDER BY freshness_score ASC NULLS FIRST LIMIT 5")
+        data = {"items": [dict(r) for r in rows]}
+        response = f"Готово: найдено {len(rows)} проблемных knowledge items.\nДальше: /з для деталей."
+    elif intent == "MORNING_BRIEF_NOW":
+        response, data = await build_morning_brief()
+        skills_used.append("morning-brief")
+    elif intent == "INBOX_VIEW":
+        recent = await inbox_events_recent(10)
+        data = recent
+        response = f"Готово: последних inbox events — {recent['count']}.\nДальше: ничего не нужно."
+    elif intent == "ALERTS_VIEW":
+        r = aioredis.from_url(REDIS_URL, decode_responses=True)
+        try:
+            alerts = await r.xrevrange('corp:alerts', count=5)
+        finally:
+            await r.aclose()
+        data = {"alerts": alerts}
+        response = f"Готово: последних алертов — {len(alerts)}.\nДальше: ничего не нужно."
+    elif intent == "DEBTS_VIEW":
+        async with pool.acquire() as c:
+            rows = await c.fetch("""
+                SELECT id,title,status,priority,moved_at FROM kanban_cards
+                WHERE (status='in_progress' AND moved_at < NOW()-INTERVAL '3 days')
+                   OR (status IN ('blocked','frozen') AND moved_at < NOW()-INTERVAL '7 days')
+                ORDER BY priority,moved_at ASC LIMIT 10
+            """)
+        data = {"items": [dict(r) for r in rows]}
+        response = f"Готово: найдено зависших задач — {len(rows)}.\nДальше: разберу P0/P1 по запросу."
+        skills_used.append("kanban-aggregator")
+    elif intent == "RISK_REVIEW":
+        response = "Готово: риск высокий, действие не выполняю автоматически.\nДальше: могу предложить безопасный вариант через подтверждение A/B/C."
+    elif intent == "COMPLEX":
+        costs = await costs_today()
+        async with pool.acquire() as c:
+            stuck = await c.fetchval("SELECT COUNT(*) FROM kanban_cards WHERE status IN ('blocked','frozen')")
+        data = {"costs": costs, "blocked_or_frozen": stuck}
+        response = f"Готово: расходы 24ч ${costs['total']:.6f}; blocked/frozen задач {stuck}.\nДальше: могу разобрать одну проблему."
+    else:
+        status = "classified"
+        response = "Нужно уточнение.\nA — поставить задачу в канбан\nB — проверить статус/расходы\nC — оценить риск"
+
+    event_body = InboxEventBody(
+        raw_text=message, source=body.source, owner_id=body.owner_id, normalized_intent=message.lower(),
+        intent_class=intent, priority=priority, risk_level=risk_level, status=status, requires_approval=requires_approval,
+        skills_used=skills_used, result_summary=response[:500], metadata={"route_data": data}
+    )
+    event_id, approval_id = await insert_inbox_event_record(event_body, status=status)
+    redis_payload = {"event_id": event_id, "source": body.source, "owner_id": body.owner_id, "intent": intent, "message": message, "priority": priority, "risk_level": risk_level, "requires_approval": requires_approval, "approval_id": approval_id, "created_at": datetime.now().isoformat()}
+    await write_redis_event("corp:inbox", redis_payload)
+    if requires_approval or status == "waiting_approval":
+        await write_redis_event("corp:approvals", redis_payload)
+    if requires_approval or risk_level in {"medium", "high", "critical"}:
+        await write_redis_event("corp:audit", {"audit_id": f"audit_{uuid.uuid4().hex[:12]}", "actor": body.source, "action": intent, "target": "corp", "risk_level": risk_level, "after_summary": response[:300], "created_at": datetime.now().isoformat(), "event_id": event_id})
+    await wsman.broadcast({"type":"inbox_route", "event_id": event_id, "intent_class": intent, "status": status})
+    return {"ok": True, "event_id": event_id, "approval_id": approval_id, "intent_class": intent, "status": status, "response": response, "data": data}
 
 @app.get("/api/inbox/events/recent")
 async def inbox_events_recent(limit: int = 20):
