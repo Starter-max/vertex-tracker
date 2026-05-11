@@ -5,7 +5,7 @@ from collections import defaultdict
 from pydantic import BaseModel
 from pathlib import Path
 from datetime import datetime
-import asyncpg, psutil, subprocess, asyncio, os, uuid, httpx, redis.asyncio as aioredis
+import asyncpg, psutil, subprocess, asyncio, os, uuid, json, httpx, redis.asyncio as aioredis
 from dotenv import load_dotenv
 
 load_dotenv("/Users/admin/workspace/digital-corp/core/.env")
@@ -391,6 +391,100 @@ async def board_messages():
 class BoardMsg(BaseModel):
     content: str
     target: str = "corp"
+
+class InboxEventBody(BaseModel):
+    raw_text: str
+    source: str = "dashboard"
+    source_message_id: Optional[str] = None
+    owner_id: Optional[str] = None
+    normalized_intent: Optional[str] = None
+    intent_class: str = "UNKNOWN"
+    project_id: Optional[str] = None
+    priority: str = "P2"
+    risk_level: str = "low"
+    status: str = "received"
+    requires_approval: bool = False
+    approval_id: Optional[str] = None
+    agents_used: List[str] = []
+    skills_used: List[str] = []
+    cost_usd: float = 0.0
+    result_summary: Optional[str] = None
+    error_summary: Optional[str] = None
+    metadata: dict = {}
+
+async def write_redis_event(stream: str, payload: dict):
+    r = aioredis.from_url(REDIS_URL, decode_responses=True)
+    try:
+        return await r.xadd(stream, {k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list, bool)) else "" if v is None else str(v) for k, v in payload.items()})
+    finally:
+        await r.aclose()
+
+@app.post("/api/inbox/events")
+async def create_inbox_event(body: InboxEventBody):
+    event_id = f"inbox_{uuid.uuid4().hex[:12]}"
+    if body.requires_approval and not body.approval_id:
+        body.approval_id = f"appr_{uuid.uuid4().hex[:10]}"
+    async with pool.acquire() as c:
+        await c.execute("""
+            INSERT INTO inbox_events
+            (event_id, source, source_message_id, owner_id, raw_text, normalized_intent, intent_class,
+             project_id, priority, risk_level, status, requires_approval, approval_id, agents_used,
+             skills_used, cost_usd, result_summary, error_summary, metadata)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16,$17,$18,$19::jsonb)
+        """, event_id, body.source, body.source_message_id, body.owner_id, body.raw_text, body.normalized_intent,
+             body.intent_class, body.project_id, body.priority, body.risk_level, body.status, body.requires_approval,
+             body.approval_id, json.dumps(body.agents_used, ensure_ascii=False), json.dumps(body.skills_used, ensure_ascii=False),
+             body.cost_usd, body.result_summary, body.error_summary, json.dumps(body.metadata, ensure_ascii=False))
+
+    redis_payload = {
+        "event_id": event_id,
+        "source": body.source,
+        "source_message_id": body.source_message_id,
+        "owner_id": body.owner_id,
+        "project_id": body.project_id,
+        "intent": body.intent_class,
+        "message": body.raw_text,
+        "priority": body.priority,
+        "risk_level": body.risk_level,
+        "requires_approval": body.requires_approval,
+        "approval_id": body.approval_id,
+        "created_at": datetime.now().isoformat(),
+    }
+    stream_id = await write_redis_event("corp:inbox", redis_payload)
+    if body.requires_approval:
+        await write_redis_event("corp:approvals", redis_payload)
+    if body.risk_level in {"medium", "high", "critical"} or body.requires_approval:
+        await write_redis_event("corp:audit", {
+            "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
+            "actor": body.source,
+            "action": body.intent_class,
+            "target": body.project_id or "corp",
+            "risk_level": body.risk_level,
+            "before_summary": "inbox event received",
+            "after_summary": body.result_summary or "waiting route/approval",
+            "created_at": datetime.now().isoformat(),
+            "event_id": event_id,
+        })
+    await wsman.broadcast({"type": "inbox_event", "event_id": event_id, "intent_class": body.intent_class, "status": body.status})
+    return {"ok": True, "event_id": event_id, "stream": "corp:inbox", "stream_id": stream_id, "approval_id": body.approval_id}
+
+@app.get("/api/inbox/events/recent")
+async def inbox_events_recent(limit: int = 20):
+    lim = max(1, min(limit, 100))
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT * FROM inbox_events ORDER BY created_at DESC LIMIT $1", lim)
+    return {"success": True, "items": [dict(r) for r in rows], "count": len(rows), "ts": datetime.now().isoformat()}
+
+@app.get("/api/approvals/pending")
+async def pending_approvals(limit: int = 20):
+    lim = max(1, min(limit, 100))
+    async with pool.acquire() as c:
+        rows = await c.fetch("""
+            SELECT * FROM inbox_events
+            WHERE requires_approval = TRUE AND status IN ('received','classified','waiting_approval')
+            ORDER BY created_at DESC LIMIT $1
+        """, lim)
+    return {"success": True, "items": [dict(r) for r in rows], "count": len(rows), "ts": datetime.now().isoformat()}
 
 @app.post("/api/board/send")
 async def board_send(body: BoardMsg):
