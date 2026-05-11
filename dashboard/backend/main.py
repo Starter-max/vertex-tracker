@@ -15,6 +15,29 @@ UPLOADS = Path("/Volumes/256/digital-corp/dashboard/uploads")
 UPLOADS.mkdir(exist_ok=True)
 pool = None
 
+async def ensure_seeded():
+    async with pool.acquire() as c:
+        await c.execute("""
+            INSERT INTO projects(id,name,type,status,budget_daily,budget_monthly)
+            VALUES ('p04','Mental Flow System','personal','active',2.50,60.00)
+            ON CONFLICT (id) DO NOTHING
+        """)
+        await c.execute("""
+            INSERT INTO agents(id,project_id,name,role,status)
+            VALUES
+              ('p04-owner','p04','Owner','manager','configured'),
+              ('p04-capture','p04','Capture Bot','capture','configured'),
+              ('p04-review','p04','Review Bot','review','configured')
+            ON CONFLICT (id) DO NOTHING
+        """)
+        await c.execute("""
+            INSERT INTO kanban_cards(id,title,description,card_type,layer,project_id,agent_id,status,priority,tags)
+            VALUES
+              ('p04-sys-001','Mental Flow System MVP','Build the personal mental-flow app with capture, review, buckets, settings, admin users and Claude sorting.','feature','strategic','p04',NULL,'in_progress','P1',ARRAY['nextjs','pwa','claude']),
+              ('p04-sys-002','Telegram admin bot','Add user management, edit flows, and owner onboarding for the bot.','feature','operational','p04',NULL,'planned','P1',ARRAY['telegram','admin'])
+            ON CONFLICT (id) DO NOTHING
+        """)
+
 class WsManager:
     def __init__(self): self.active = []
     async def connect(self, ws):
@@ -32,6 +55,7 @@ wsman = WsManager()
 async def lifespan(app):
     global pool
     pool = await asyncpg.create_pool(DB, min_size=2, max_size=10)
+    await ensure_seeded()
     yield
     await pool.close()
 
