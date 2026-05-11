@@ -1,0 +1,7 @@
+'use client';
+import { Thought } from '@/lib/types';
+import { classifyThought } from '@/lib/classifier';
+import { useAppState } from '@/lib/use-app-state';
+const labels: Record<string,string> = { ACTIVE_HEALTH:'Здоровье', ACTIVE_FAMILY:'Семья', ACTIVE_BUSINESS:'Бизнес', PARKING:'Парковка', ARCHIVE:'Архив' };
+export function ReviewSession({ thoughts, index, onAdvance }: { thoughts: Thought[]; index: number; onAdvance: () => void; }) { const { state, setState } = useAppState(); const current = thoughts[index]; if (!current) return <p className="py-10 text-slate-400">Инбокс пуст.</p>; const move=(category:any)=>{ setState({...state, thoughts: state.thoughts.map(t => t.id===current.id ? {...t, category} : t)}); onAdvance(); };
+ return <div className="mt-6 space-y-4"><div className="rounded-3xl border border-slate-800 bg-slate-950 p-5 text-xl">{current.text}</div><div className="grid gap-3 sm:grid-cols-2"><button className="rounded-2xl bg-amber-500 px-4 py-4 font-semibold text-slate-950" onClick={()=>move('PARKING')}>ДА — Парковка</button><button className="rounded-2xl bg-slate-700 px-4 py-4 font-semibold" onClick={()=>move(classifyThought(current.text))}>НЕТ — Авто</button></div><div className="grid gap-3 sm:grid-cols-3">{(['ACTIVE_HEALTH','ACTIVE_FAMILY','ACTIVE_BUSINESS','ARCHIVE'] as const).map(c => <button key={c} className="rounded-2xl border border-slate-700 px-4 py-3" onClick={()=>move(c)}>{labels[c]}</button>)}</div></div> }
