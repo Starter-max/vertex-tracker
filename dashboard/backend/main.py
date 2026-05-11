@@ -338,6 +338,11 @@ from starlette.responses import HTMLResponse as _HTMLResponse
 @app.get("/")
 async def serve(): return _HTMLResponse(content=FRONTEND.read_text(), media_type="text/html; charset=utf-8")
 
+@app.get("/agents-room")
+async def agents_room():
+    p = Path("/Users/admin/workspace/digital-corp/dashboard/frontend/agents-room.html")
+    return _HTMLResponse(content=p.read_text(), media_type="text/html; charset=utf-8")
+
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 @app.get("/api/agents")

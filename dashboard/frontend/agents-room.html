@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Agent Control Room</title>
+  <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+  <style>
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f6f7f9;color:#111;margin:0}
+    .wrap{max-width:1200px;margin:0 auto;padding:16px}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .card{background:#fff;border:1px solid #e6e6e6;border-radius:10px;padding:12px}
+    h1{font-size:20px;margin:0 0 12px}
+    h2{font-size:14px;margin:0 0 8px;color:#666;text-transform:uppercase}
+    .item{padding:8px 0;border-bottom:1px solid #f0f0f0}
+    .mono{font-family:ui-monospace,Menlo,monospace;font-size:12px}
+    .muted{color:#777}
+    .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    button{border:1px solid #ddd;background:#fff;border-radius:8px;padding:6px 10px;cursor:pointer}
+  </style>
+</head>
+<body x-data="room()" x-init="init()">
+  <div class="wrap">
+    <div class="top">
+      <h1>🏛 Agent Control Room</h1>
+      <div>
+        <button @click="load()">↻ refresh</button>
+        <a href="/" style="margin-left:8px">dashboard</a>
+      </div>
+    </div>
+    <div class="row">
+      <div class="card">
+        <h2>Live feed</h2>
+        <template x-for="e in events" :key="e.event_id">
+          <div class="item">
+            <div><b x-text="e.event_type"></b> · <span x-text="e.status||'—'"></span></div>
+            <div class="muted" x-text="(e.from_agent||'?') + ' → ' + (e.to_agent||'?')"></div>
+            <div class="mono" x-text="e.task_id||''"></div>
+            <div class="muted" x-text="e.message||''"></div>
+          </div>
+        </template>
+      </div>
+      <div class="card">
+        <h2>Agents activity</h2>
+        <template x-for="a in activity" :key="a.agent">
+          <div class="item">
+            <div><b x-text="a.agent"></b> · <span x-text="a.current_status||'—'"></span></div>
+            <div class="mono" x-text="a.current_task||''"></div>
+            <div class="muted" x-text="a.last_event_type + ' · ' + (a.last_message||'')"></div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+<script>
+function room(){
+  return {
+    events:[], activity:[],
+    async load(){
+      const e = await fetch('/api/agent-events/recent').then(r=>r.json()).catch(()=>({items:[]}));
+      const a = await fetch('/api/agents/activity').then(r=>r.json()).catch(()=>({items:[]}));
+      this.events = e.items || [];
+      this.activity = a.items || [];
+    },
+    init(){ this.load(); setInterval(()=>this.load(),5000); }
+  }
+}
+</script>
+</body>
+</html>
