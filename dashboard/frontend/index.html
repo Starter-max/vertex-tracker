@@ -120,6 +120,29 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
 .board-time{color:#bbb;font-size:10px;float:right}
 .board-content{color:#333;margin-top:2px;font-family:'SF Mono',Monaco,monospace;font-size:11px;word-break:break-all}
 .target-select{font-size:12px;padding:5px 8px;border:1px solid #ddd;border-radius:6px;background:#fff;color:#555;margin-bottom:6px;width:100%}
+.kb-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+.kb-layer-btn{font-size:12px;padding:5px 14px;border-radius:20px;border:1px solid #e0e0e0;background:#fff;cursor:pointer;color:#888}
+.kb-layer-btn.active{background:#1a1a1a;color:#fff;border-color:#1a1a1a}
+.kb-filter{font-size:12px;padding:5px 10px;border:1px solid #ddd;border-radius:7px;background:#fff;color:#555}
+.kb-wrap{display:flex;gap:14px;overflow-x:auto;padding-bottom:1rem;min-height:70vh}
+.kb-col{min-width:240px;width:240px;flex-shrink:0;display:flex;flex-direction:column}
+.kb-col-hdr{padding:.6rem .75rem;border-radius:10px 10px 0 0;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:space-between;border:1px solid #e8e8e8;border-bottom:none;background:#f9f9f9}
+.kb-col-hdr .cnt{font-size:11px;background:#e0e0e0;border-radius:10px;padding:1px 7px;color:#666}
+.kb-cards{background:#f5f5f5;border:1px solid #e8e8e8;border-radius:0 0 10px 10px;padding:8px;display:flex;flex-direction:column;gap:7px;flex:1;min-height:200px}
+.kb-card{background:#fff;border:1px solid #e8e8e8;border-radius:8px;padding:.7rem .85rem;cursor:pointer;position:relative}
+.kb-card.feature{border-left:3px solid #3498db}.kb-card.td{border-left:3px solid #e67e22}.kb-card.bug{border-left:3px solid #e74c3c}
+.kb-p{font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;display:inline-block;margin-bottom:5px}
+.kb-p0{background:#fdf0f0;color:#e74c3c}.kb-p1{background:#fff4ec;color:#e67e22}.kb-p2{background:#f0f8ff;color:#3498db}.kb-p3{background:#f5f5f5;color:#bbb}
+.kb-title{font-size:12px;font-weight:600;line-height:1.35;margin-bottom:5px}
+.kb-meta{font-size:10px;color:#bbb;display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+.kb-badge{font-size:10px;padding:1px 6px;border-radius:10px;background:#f0f0f0;color:#888}
+.kb-time{font-size:10px;color:#bbb}.kb-time.warn{color:#e67e22}.kb-time.danger{color:#e74c3c}
+.kb-add-btn{font-size:12px;padding:5px 14px;border:1px dashed #ccc;border-radius:7px;background:transparent;cursor:pointer;color:#aaa;margin-top:4px}
+.kb-modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;display:flex;align-items:center;justify-content:center}
+.kb-modal{background:#fff;border-radius:14px;padding:1.5rem;width:480px;max-width:90vw;max-height:85vh;overflow-y:auto}
+.kb-modal h3{font-size:16px;font-weight:700;margin-bottom:1rem}
+.kb-status-btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:1rem}
+
 
 @keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-5px)}}
 @media(max-width:700px){.sys{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.chat-sidebar,.sidebar{width:100%;position:fixed;bottom:0;left:0;right:0;height:60vh;z-index:100;border-top:1px solid #e0e0e0;border-left:none}}
@@ -132,6 +155,8 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
   <nav class="nav">
     <button class="nav-btn" :class="{active:view==='dashboard'}" @click="view='dashboard';detail=null">Обзор</button>
     <button class="nav-btn" :class="{active:view==='settings'}" @click="view='settings';loadSettings()">Настройки</button>
+    <button class="nav-btn" :class="{active:view==='knowledge'}" @click="view='knowledge';loadKnowledge()">🧠 Знания</button>
+    <button class="nav-btn" :class="{active:view==='kanban'}" @click="view='kanban';loadKanban()">📋 Канбан</button>
   </nav>
   <div class="hdr-right">
     <span class="time-badge" :class="{stale:staleMins>10}" x-text="timeAgoLabel"></span>
@@ -237,6 +262,42 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
 
         <div style="font-size:11px;color:#ccc;text-align:center;padding-top:1rem">
           Digital Corp Dashboard v1.1 · обновляется каждые 30с
+        </div>
+      </div>
+    </template>
+
+    <template x-if="view==='knowledge'">
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+          <div style="font-size:16px;font-weight:700">🧠 Актуальность знаний</div>
+          <button class="btn primary" @click="refreshKnowledge()">↻ обновить</button>
+        </div>
+        <div class="sys" style="grid-template-columns:repeat(4,1fr)">
+          <div class="sys-card"><div class="lbl">всего</div><div class="val" x-text="knowledge.summary?.total||0"></div></div>
+          <div class="sys-card"><div class="lbl">актуально</div><div class="val" style="color:#27ae60" x-text="knowledge.summary?.ok||0"></div></div>
+          <div class="sys-card"><div class="lbl">устарело</div><div class="val" style="color:#e67e22" x-text="knowledge.summary?.outdated||0"></div></div>
+          <div class="sys-card"><div class="lbl">критично</div><div class="val" style="color:#e74c3c" x-text="knowledge.summary?.critical||0"></div></div>
+        </div>
+        <div class="section-tabs">
+          <button class="stab" :class="{active:knowledgeFilter==='all'}" @click="knowledgeFilter='all'">Все</button>
+          <button class="stab" :class="{active:knowledgeFilter==='llm'}" @click="knowledgeFilter='llm'">LLM</button>
+          <button class="stab" :class="{active:knowledgeFilter==='framework'}" @click="knowledgeFilter='framework'">Frameworks</button>
+          <button class="stab" :class="{active:knowledgeFilter==='infra'}" @click="knowledgeFilter='infra'">Infra</button>
+          <button class="stab" :class="{active:knowledgeFilter==='skill'}" @click="knowledgeFilter='skill'">Skills</button>
+          <button class="stab" :class="{active:knowledgeFilter==='critical'}" @click="knowledgeFilter='critical'">🔴 Critical</button>
+        </div>
+        <div class="tbl">
+          <div class="tbl-row" style="background:#f9f9f9;font-weight:700;text-transform:uppercase;font-size:11px;color:#aaa">
+            <span>Компонент</span><span>Текущая</span><span>Последняя</span><span>Статус</span>
+          </div>
+          <template x-for="item in filteredKnowledge()" :key="item.id">
+            <div class="tbl-row">
+              <div><div x-text="item.name"></div><div style="font-size:11px;color:#bbb" x-text="item.category"></div></div>
+              <div style="font-family:'SF Mono',Monaco,monospace;font-size:12px" x-text="item.current_version||'—'"></div>
+              <div style="font-family:'SF Mono',Monaco,monospace;font-size:12px;color:#666" x-text="item.latest_version||'—'"></div>
+              <div x-text="knowledgeIcon(item.status)+' '+item.status"></div>
+            </div>
+          </template>
         </div>
       </div>
     </template>
@@ -392,6 +453,8 @@ function app() {
     chatMessages: {}, chatInput: '', chatLoading: false,
     agentCounts: {},
     boardMessages: [], boardInput: '', boardTarget: 'corp', boardLoading: false,
+    knowledge: {items: [], summary: {}}, knowledgeFilter: 'all',
+    kanbanCards: [], kanbanLayer: 'strategic', kanbanFilter: 'all', kanbanProjectFilter: 'all', kanbanModal: null, newCard: {title:'',description:'',card_type:'task',layer:'strategic',project_id:null,priority:'P2'},
     sections: [
       {type:'business', label:'Бизнес', icon:'💼'},
       {type:'personal', label:'Личные', icon:'👤'},
@@ -470,6 +533,53 @@ function app() {
       this.settings = await fetch('/api/settings').then(r=>r.json());
     },
 
+
+    async loadKanban() {
+      this.kanbanCards = await fetch('/api/kanban?layer=' + this.kanbanLayer).then(r => r.json());
+    },
+    kanbanColumns() {
+      return this.kanbanLayer === 'strategic'
+        ? [{id:'idea',label:'💡 Идеи'},{id:'planned',label:'📋 Запланировано'},{id:'in_progress',label:'⚙️ В работе'},{id:'done',label:'✅ Запущен'},{id:'frozen',label:'❄️ Заморожено'}]
+        : [{id:'queue',label:'📥 Очередь'},{id:'in_progress',label:'⚙️ В работе'},{id:'review',label:'🔍 Проверка'},{id:'done',label:'✅ Готово'},{id:'blocked',label:'🚫 Заблокировано'}];
+    },
+    cardsForColumn(colId) {
+      let cards = this.kanbanCards.filter(c => c.status === colId);
+      if (this.kanbanFilter !== 'all') cards = cards.filter(c => c.card_type === this.kanbanFilter);
+      if (this.kanbanProjectFilter !== 'all') cards = cards.filter(c => c.project_id === this.kanbanProjectFilter);
+      return cards.sort((a,b) => (a.priority||'P2').localeCompare(b.priority||'P2'));
+    },
+    colCount(colId) { return this.cardsForColumn(colId).length; },
+    priorityClass(p) { return {'P0':'kb-p0','P1':'kb-p1','P2':'kb-p2','P3':'kb-p3'}[p] || 'kb-p3'; },
+    timeClass(hrs) { return hrs > 72 ? 'danger' : hrs > 24 ? 'warn' : ''; },
+    cardTypeClass(t) { return {'tech_debt':'td','bug':'bug','feature':'feature'}[t] || ''; },
+    openCard(card) { this.kanbanModal = card; },
+    async moveCard(cardId, newStatus) { await fetch('/api/kanban/' + cardId + '/status', {method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status:newStatus})}); await this.loadKanban(); this.kanbanModal = null; },
+    async createCard() { if (!this.newCard.title.trim()) return; this.newCard.layer = this.kanbanLayer; await fetch('/api/kanban', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(this.newCard)}); this.newCard = {title:'',description:'',card_type:'task',layer:'strategic',project_id:null,priority:'P2'}; await this.loadKanban(); },
+    async deleteCard(id) { if (!confirm('Удалить карточку?')) return; await fetch('/api/kanban/' + id, {method:'DELETE'}); this.kanbanModal = null; await this.loadKanban(); },
+    async loadKnowledge() {
+      this.knowledge = await fetch('/api/knowledge').then(r=>r.json());
+    },
+
+    async refreshKnowledge() {
+      await fetch('/api/knowledge/refresh', {method:'POST'});
+      setTimeout(()=>this.loadKnowledge(), 3000);
+    },
+
+    filteredKnowledge() {
+      if (this.knowledgeFilter === 'all') return this.knowledge.items || [];
+      return (this.knowledge.items || []).filter(i => i.category === this.knowledgeFilter || i.status === this.knowledgeFilter);
+    },
+
+    knowledgeColor(score) {
+      if (score >= 80) return '#27ae60';
+      if (score >= 50) return '#e67e22';
+      return '#e74c3c';
+    },
+
+    knowledgeIcon(status) {
+      return {ok:'🟢', outdated:'🟡', critical:'🔴', unknown:'❓'}[status] || '❓';
+    },
+
     async updateSetting(key, value) {
       await fetch('/api/settings/'+encodeURIComponent(key),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({value})});
     },
@@ -518,8 +628,12 @@ function app() {
       this.$nextTick(()=>this.scrollChat());
     },
 
-    closeChat(idx) {
-      const sid = this.chatSessions[idx].id;
+    async closeChat(idx) {
+      const sid = this.chatSessions[idx]?.id;
+      if(!sid) return;
+      try {
+        await fetch('/api/chat/sessions/'+sid,{method:'DELETE'});
+      } catch(e) {}
       this.chatSessions.splice(idx,1);
       delete this.chatMessages[sid];
       if(this.activeChatId===sid) this.activeChatId = this.chatSessions[0]?.id||null;
@@ -538,6 +652,7 @@ function app() {
         await fetch('/api/chat/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sid,content})});
       } catch(e) {
         this.chatMessages[sid].push({id:Date.now()+1,role:'assistant',content:'Ошибка соединения',created_at:new Date().toISOString()});
+      } finally {
         this.chatLoading=false;
       }
     },
@@ -551,9 +666,9 @@ function app() {
       this.chatInput = (this.chatInput+' [файл: '+r.name+' → '+r.path+']').trim();
     },
 
-    openChatWith(prefix) {
+    async openChatWith(prefix) {
       this.chatOpen = true;
-      if(!this.activeChatId) { this.newChat(); }
+      if(!this.activeChatId) { await this.newChat(); }
       this.chatInput = prefix;
       this.$nextTick(()=>document.querySelector('.chat-textarea')?.focus());
     },

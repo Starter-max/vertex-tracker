@@ -127,6 +127,97 @@ async def update_setting(key: str, body: SettingBody):
     async with pool.acquire() as c: await c.execute("UPDATE settings SET value=$1, updated_at=NOW() WHERE key=$2", body.value, key)
     return {"ok":True}
 
+@app.get("/api/knowledge")
+async def get_knowledge():
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT * FROM knowledge_items ORDER BY freshness_score ASC, category, name")
+    items = [dict(r) for r in rows]
+    total = len(items) or 1
+    summary = {
+        "total": len(items),
+        "ok": len([i for i in items if i.get('status') == 'ok']),
+        "outdated": len([i for i in items if i.get('status') == 'outdated']),
+        "critical": len([i for i in items if i.get('status') == 'critical']),
+        "unknown": len([i for i in items if i.get('status') == 'unknown']),
+        "avg_score": round(sum(i.get('freshness_score') or 0 for i in items) / total),
+    }
+    return {"items": items, "summary": summary}
+
+@app.post("/api/knowledge/refresh")
+async def refresh_knowledge():
+    subprocess.Popen([
+        "python3.12",
+        "/Volumes/256/digital-corp/agents/a06-research/research_agent.py",
+    ], stdout=open("/Volumes/256/digital-corp/logs/a06.log", "a"), stderr=subprocess.STDOUT)
+    return {"ok": True}
+
+from typing import Optional, List
+
+class KanbanCardBody(BaseModel):
+    title: str
+    description: str = ""
+    card_type: str = "task"
+    layer: str = "strategic"
+    project_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    status: str = "planned"
+    priority: str = "P2"
+    due_date: Optional[str] = None
+    tags: List[str] = []
+
+class StatusBody(BaseModel):
+    status: str
+
+@app.get("/api/kanban")
+async def get_kanban(layer: str = "strategic", project_id: str = None, card_type: str = None):
+    async with pool.acquire() as c:
+        q = "SELECT * FROM kanban_cards WHERE layer=$1"
+        params = [layer]
+        if project_id:
+            q += f" AND project_id=${len(params)+1}"
+            params.append(project_id)
+        if card_type:
+            q += f" AND card_type=${len(params)+1}"
+            params.append(card_type)
+        rows = await c.fetch(q + " ORDER BY priority, moved_at ASC", *params)
+    cards = []
+    now = datetime.now().astimezone()
+    for r in rows:
+        d = dict(r)
+        moved_at = d.get('moved_at')
+        if moved_at:
+            delta = now - moved_at
+            hrs = int(delta.total_seconds() // 3600)
+            d['time_in_stage_hrs'] = hrs
+            d['time_in_stage'] = f"{hrs}ч" if hrs < 48 else f"{hrs//24}д"
+        else:
+            d['time_in_stage_hrs'] = 0
+            d['time_in_stage'] = '—'
+        cards.append(d)
+    return cards
+
+@app.post("/api/kanban")
+async def create_kanban_card(body: KanbanCardBody):
+    cid = f"card-{int(datetime.now().timestamp())}"
+    async with pool.acquire() as c:
+        await c.execute("""
+            INSERT INTO kanban_cards (id,title,description,card_type,layer,project_id,agent_id,status,priority,due_date,tags)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        """, cid, body.title, body.description, body.card_type, body.layer, body.project_id, body.agent_id, body.status, body.priority, body.due_date, body.tags)
+    return {"ok": True, "id": cid}
+
+@app.patch("/api/kanban/{card_id}/status")
+async def update_kanban_status(card_id: str, body: StatusBody):
+    async with pool.acquire() as c:
+        await c.execute("UPDATE kanban_cards SET status=$1, moved_at=NOW(), updated_at=NOW() WHERE id=$2", body.status, card_id)
+    return {"ok": True}
+
+@app.delete("/api/kanban/{card_id}")
+async def delete_kanban_card(card_id: str):
+    async with pool.acquire() as c:
+        await c.execute("DELETE FROM kanban_cards WHERE id=$1", card_id)
+    return {"ok": True}
+
 @app.get("/api/chat/sessions")
 async def chat_sessions():
     async with pool.acquire() as c: rows = await c.fetch("SELECT * FROM chat_sessions ORDER BY created_at DESC LIMIT 20")
@@ -145,6 +236,13 @@ async def get_chat_messages(sid: str):
     async with pool.acquire() as c:
         rows = await c.fetch("SELECT * FROM chat_messages WHERE session_id=$1 ORDER BY created_at ASC LIMIT 200", sid)
     return [dict(r) for r in rows]
+
+@app.delete("/api/chat/sessions/{sid}")
+async def delete_chat_session(sid: str):
+    async with pool.acquire() as c:
+        await c.execute("DELETE FROM chat_messages WHERE session_id=$1", sid)
+        await c.execute("DELETE FROM chat_sessions WHERE id=$1", sid)
+    return {"ok": True}
 
 class MsgBody(BaseModel): session_id: str; content: str
 
@@ -165,14 +263,26 @@ async def call_hermes(message: str, session_id: str) -> str:
     # Try Hermes CLI
     try:
         r = subprocess.run(
-            ["hermes", "ask", "--no-stream", message],
-            capture_output=True, text=True, timeout=30,
-            env={**os.environ, "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"}
+            ["hermes", "chat", "-q", message],
+            capture_output=True, text=True, timeout=90,
+            env={**os.environ, "PATH": "/Users/admin/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"}
         )
-        if r.returncode == 0 and r.stdout.strip():
-            return r.stdout.strip()[:2000]
-    except: pass
-    return "⚠️ Hermes не подключён. Попробуй: hermes ask 'твой вопрос' в терминале."
+        if r.returncode == 0:
+            out = (r.stdout or "").strip()
+            if out:
+                lines = [ln.rstrip() for ln in out.splitlines()]
+                cleaned = []
+                for ln in lines:
+                    if ln.startswith(("Query:", "Initializing agent", "Resume this session with:", "Session:", "Duration:", "Messages:")):
+                        continue
+                    if ln.strip() in {"────────────────────────────────────────", "╭─ ⚕ Hermes ───────────────────────────────────────────────────────────────────╮", "╰──────────────────────────────────────────────────────────────────────────────╯"}:
+                        continue
+                    cleaned.append(ln)
+                cleaned = "\n".join([ln for ln in cleaned if ln.strip()])
+                return cleaned[:2000] if cleaned else out[:2000]
+    except Exception:
+        pass
+    return "⚠️ Hermes не подключён. Попробуй: hermes chat -q 'твой вопрос' в терминале."
 
 @app.post("/api/chat/send")
 async def send_msg(body: MsgBody):
