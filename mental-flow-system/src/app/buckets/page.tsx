@@ -1,5 +1,4 @@
 'use client';
-
 import { BottomNav } from '@/components/BottomNav';
 import { BucketView } from '@/components/BucketView';
 import { useAppState } from '@/lib/use-app-state';

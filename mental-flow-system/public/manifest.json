@@ -1,9 +1,11 @@
 {
   "name": "Mental Flow System",
-  "short_name": "MentalFlow",
+  "short_name": "Mental Flow",
+  "description": "Capture and sort incoming thoughts into active work, parking, and archive.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#020617",
-  "theme_color": "#020617",
+  "theme_color": "#0f172a",
   "icons": []
 }
