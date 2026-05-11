@@ -405,3 +405,51 @@ async def ping_agent(agent_id: str):
     async with pool.acquire() as c:
         await c.execute("UPDATE agents SET last_heartbeat=NOW(), status='active' WHERE id=$1", agent_id)
     return {"ok": True}
+
+@app.get("/api/agent-events/recent")
+async def agent_events_recent(limit: int = 50):
+    lim = max(1, min(limit, 200))
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT * FROM agent_events ORDER BY created_at DESC LIMIT $1", lim)
+    return {"success": True, "items": [dict(r) for r in rows], "count": len(rows), "ts": datetime.now().isoformat()}
+
+@app.get("/api/agent-events/by-task/{task_id}")
+async def agent_events_by_task(task_id: str):
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT * FROM agent_events WHERE task_id=$1 ORDER BY created_at ASC", task_id)
+    return {"success": True, "items": [dict(r) for r in rows], "count": len(rows), "ts": datetime.now().isoformat()}
+
+@app.get("/api/agents/activity")
+async def agents_activity():
+    sql = """
+    WITH t AS (
+      SELECT
+        COALESCE(to_agent, from_agent) AS agent,
+        task_id,
+        status,
+        event_type,
+        message,
+        skills_used,
+        created_at,
+        ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(to_agent, from_agent)
+          ORDER BY created_at DESC
+        ) AS rn
+      FROM agent_events
+      WHERE COALESCE(to_agent, from_agent) IS NOT NULL
+    )
+    SELECT
+      agent,
+      status AS current_status,
+      task_id AS current_task,
+      event_type AS last_event_type,
+      message AS last_message,
+      created_at AS last_seen_at,
+      skills_used
+    FROM t
+    WHERE rn = 1
+    ORDER BY last_seen_at DESC
+    """
+    async with pool.acquire() as c:
+        rows = await c.fetch(sql)
+    return {"success": True, "items": [dict(r) for r in rows], "count": len(rows), "ts": datetime.now().isoformat()}
