@@ -145,6 +145,8 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
 .kb-modal{background:#fff;border-radius:14px;padding:1.5rem;width:480px;max-width:90vw;max-height:85vh;overflow-y:auto}
 .kb-modal h3{font-size:16px;font-weight:700;margin-bottom:1rem}
 .kb-status-btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:1rem}
+.kb-card.dragging{opacity:.5;transform:scale(.98)}
+.kb-drop-target{outline:2px dashed #bbb;outline-offset:4px}
 
 
 @keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-5px)}}
@@ -457,7 +459,7 @@ function app() {
     agentCounts: {},
     boardMessages: [], boardInput: '', boardTarget: 'corp', boardLoading: false,
     knowledge: {items: [], summary: {}}, knowledgeFilter: 'all',
-    kanbanCards: [], kanbanLayer: 'strategic', kanbanFilter: 'all', kanbanProjectFilter: 'all', kanbanModal: null, newCard: {title:'',description:'',card_type:'task',layer:'strategic',project_id:null,priority:'P2'},
+    kanbanCards: [], kanbanLayer: 'strategic', kanbanFilter: 'all', kanbanProjectFilter: 'all', kanbanModal: null, draggedCardId: null, newCard: {title:'',description:'',card_type:'task',layer:'strategic',project_id:null,priority:'P2'},
     sections: [
       {type:'business', label:'Бизнес', icon:'💼'},
       {type:'personal', label:'Личные', icon:'👤'},
@@ -556,6 +558,12 @@ function app() {
     timeClass(hrs) { return hrs > 72 ? 'danger' : hrs > 24 ? 'warn' : ''; },
     cardTypeClass(t) { return {'tech_debt':'td','bug':'bug','feature':'feature'}[t] || ''; },
     openCard(card) { this.kanbanModal = card; },
+
+    kbDragStart(cardId, e) { this.draggedCardId = cardId; e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', cardId); } catch(_) {} },
+    kbDragEnd() { this.draggedCardId = null; document.querySelectorAll('.kb-drop-target').forEach(el => el.classList.remove('kb-drop-target')); },
+    kbDragOver(colId, e) { e.currentTarget.classList.add('kb-drop-target'); },
+    kbDragLeave(e) { e.currentTarget.classList.remove('kb-drop-target'); },
+    async kbDrop(colId, e) { e.currentTarget.classList.remove('kb-drop-target'); const id = this.draggedCardId || e.dataTransfer.getData('text/plain'); if (id) await this.moveCard(id, colId); this.kbDragEnd(); },
     async moveCard(cardId, newStatus) { await fetch('/api/kanban/' + cardId + '/status', {method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status:newStatus})}); await this.loadKanban(); this.kanbanModal = null; },
     async createCard() { if (!this.newCard.title.trim()) return; this.newCard.layer = this.kanbanLayer; await fetch('/api/kanban', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(this.newCard)}); this.newCard = {title:'',description:'',card_type:'task',layer:'strategic',project_id:null,priority:'P2'}; await this.loadKanban(); },
     async deleteCard(id) { if (!confirm('Удалить карточку?')) return; await fetch('/api/kanban/' + id, {method:'DELETE'}); this.kanbanModal = null; await this.loadKanban(); },
