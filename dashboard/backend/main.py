@@ -110,9 +110,10 @@ async def get_project(pid: str):
             GROUP BY agent_id ORDER BY usd DESC
         """, pid)
         total = await c.fetchval("SELECT ROUND(SUM(cost_usd)::numeric,6) FROM costs WHERE project_id=$1 AND created_at > NOW()-INTERVAL '24h'", pid)
+        all_agents = await c.fetch("SELECT id, project_id, name, role, status, last_heartbeat FROM agents WHERE project_id=$1 ORDER BY id", pid)
     log_path = Path(f"/Volumes/256/digital-corp/logs/{pid}.log")
     logs = "\n".join(log_path.read_text().splitlines()[-40:]) if log_path.exists() else "нет логов"
-    return {**dict(p), "cost_today": float(total or 0), "agents": [dict(a) for a in agents], "logs": logs}
+    return {**dict(p), "cost_today": float(total or 0), "agents": [dict(a) for a in agents], "project_agents": [dict(a) for a in all_agents], "logs": logs}
 
 @app.post("/api/projects/{pid}/pause")
 async def pause_proj(pid: str):

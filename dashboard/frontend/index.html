@@ -333,6 +333,20 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
             <div class="tbl-row" style="color:#ccc">нет активности за 24ч</div>
           </template>
         </div>
+        <div class="lbl" style="margin-bottom:8px;font-size:12px;font-weight:700;color:#aaa;text-transform:uppercase">агенты проекта</div>
+        <div class="tbl">
+          <template x-if="detail.project_agents&&detail.project_agents.length>0">
+            <template x-for="a in detail.project_agents" :key="a.id">
+              <div class="tbl-row">
+                <span x-text="a.name + ' · ' + a.role"></span>
+                <span style="color:#aaa;font-size:12px" x-text="a.status + (a.last_heartbeat ? ' · ' + relTime(a.last_heartbeat) : '')"></span>
+              </div>
+            </template>
+          </template>
+          <template x-if="!detail.project_agents||detail.project_agents.length===0">
+            <div class="tbl-row" style="color:#ccc">у проекта пока нет агентов</div>
+          </template>
+        </div>
         <div class="lbl" style="margin-bottom:8px;font-size:12px;font-weight:700;color:#aaa;text-transform:uppercase">последние логи</div>
         <div class="logbox" x-text="detail.logs||'нет логов'"></div>
         <div class="actions">
@@ -364,6 +378,71 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
           </div>
         </template>
         <div style="font-size:11px;color:#ccc;padding:.5rem 0">Изменения сохраняются автоматически</div>
+      </div>
+    </template>
+
+    <template x-if="view==='kanban'">
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;gap:8px;flex-wrap:wrap">
+          <div style="font-size:16px;font-weight:700">📋 Канбан корпорации</div>
+          <div class="kb-toolbar" style="margin:0">
+            <button class="kb-layer-btn" :class="{active:kanbanLayer==='strategic'}" @click="kanbanLayer='strategic';loadKanban()">Стратегический</button>
+            <button class="kb-layer-btn" :class="{active:kanbanLayer==='operational'}" @click="kanbanLayer='operational';loadKanban()">Операционный</button>
+            <select class="kb-filter" x-model="kanbanFilter" @change="loadKanban()">
+              <option value="all">Все типы</option>
+              <option value="feature">feature</option>
+              <option value="bug">bug</option>
+              <option value="tech_debt">tech_debt</option>
+              <option value="task">task</option>
+            </select>
+          </div>
+        </div>
+        <div class="kb-toolbar">
+          <select class="kb-filter" x-model="kanbanProjectFilter" @change="loadKanban()">
+            <option value="all">Все проекты</option>
+            <template x-for="p in projects" :key="p.id">
+              <option :value="p.id" x-text="p.id.toUpperCase() + ' · ' + p.name"></option>
+            </template>
+          </select>
+          <input class="kb-filter" style="min-width:220px" x-model="newCard.title" placeholder="Новая карточка">
+          <input class="kb-filter" style="min-width:280px" x-model="newCard.description" placeholder="Описание">
+          <button class="btn primary" @click="createCard()">+ создать</button>
+        </div>
+        <div class="kb-wrap">
+          <template x-for="col in kanbanColumns()" :key="col.id">
+            <div class="kb-col" @dragover.prevent="kbDragOver(col.id,$event)" @dragleave="kbDragLeave($event)" @drop.prevent="kbDrop(col.id,$event)">
+              <div class="kb-col-hdr"><span x-text="col.label"></span><span class="cnt" x-text="colCount(col.id)"></span></div>
+              <div class="kb-cards">
+                <template x-for="card in cardsForColumn(col.id)" :key="card.id">
+                  <div class="kb-card" :class="cardTypeClass(card.card_type)+' '+(draggedCardId===card.id?'dragging':'')" draggable="true" @dragstart="kbDragStart(card.id,$event)" @dragend="kbDragEnd()" @click="openCard(card)">
+                    <div class="kb-p" :class="priorityClass(card.priority)" x-text="card.priority"></div>
+                    <div class="kb-title" x-text="card.title"></div>
+                    <div class="kb-meta">
+                      <span x-text="(card.project_id||'—').toUpperCase()"></span>
+                      <span x-text="card.card_type"></span>
+                      <span class="kb-time" :class="timeClass(card.time_in_stage_hrs)" x-text="card.time_in_stage"></span>
+                    </div>
+                  </div>
+                </template>
+                <div style="font-size:11px;color:#bbb;text-align:center;padding:10px 0" x-show="cardsForColumn(col.id).length===0">Пусто</div>
+              </div>
+            </div>
+          </template>
+        </div>
+        <template x-if="kanbanModal">
+          <div class="kb-modal-bg" @click.self="kanbanModal=null">
+            <div class="kb-modal">
+              <h3 x-text="kanbanModal.title"></h3>
+              <div style="font-size:12px;color:#666;line-height:1.6" x-text="kanbanModal.description||'—'"></div>
+              <div class="kb-status-btns">
+                <template x-for="col in kanbanColumns()" :key="col.id">
+                  <button class="kb-layer-btn" @click="moveCard(kanbanModal.id,col.id)" x-text="col.label"></button>
+                </template>
+                <button class="kb-layer-btn" @click="deleteCard(kanbanModal.id)">Удалить</button>
+              </div>
+            </div>
+          </div>
+        </template>
       </div>
     </template>
 
