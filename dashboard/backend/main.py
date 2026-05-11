@@ -345,6 +345,8 @@ async def agents_room():
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+
 @app.get("/api/agents")
 async def get_agents(project_id: str = None):
     async with pool.acquire() as c:
@@ -392,6 +394,8 @@ class BoardMsg(BaseModel):
 
 @app.post("/api/board/send")
 async def board_send(body: BoardMsg):
+    event_id = f"evt_{uuid.uuid4().hex[:12]}"
+    task_id = f"task_{uuid.uuid4().hex[:10]}"
     r = aioredis.from_url(REDIS_URL, decode_responses=True)
     stream = f"{body.target}:tasks" if body.target != "corp" else "corp:tasks"
     try:
@@ -399,11 +403,21 @@ async def board_send(body: BoardMsg):
             "source": "dashboard",
             "agent": "owner",
             "message": body.content,
+            "task_id": task_id,
+            "event_id": event_id,
             "ts": str(datetime.now().timestamp())
         })
     finally:
         await r.aclose()
-    return {"ok": True, "stream": stream}
+
+    async with pool.acquire() as c:
+        await c.execute("""
+            INSERT INTO agent_events
+            (event_id, project_id, task_id, from_agent, to_agent, event_type, status, priority, message, skills_used, tools_used, cost_usd, metadata)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'[]'::jsonb,'[]'::jsonb,$10,$11::jsonb)
+        """, event_id, 'corp', task_id, 'owner', body.target, 'delegated', 'queued', 'P2', body.content, 0.0, '{}')
+
+    return {"ok": True, "stream": stream, "event_id": event_id, "task_id": task_id}
 
 @app.post("/api/agents/{agent_id}/ping")
 async def ping_agent(agent_id: str):
