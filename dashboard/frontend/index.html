@@ -162,6 +162,7 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
     <button class="nav-btn" :class="{active:view==='settings'}" @click="view='settings';loadSettings()">Настройки</button>
     <button class="nav-btn" :class="{active:view==='knowledge'}" @click="view='knowledge';loadKnowledge()">🧠 Знания</button>
     <button class="nav-btn" :class="{active:view==='kanban'}" @click="view='kanban';loadKanban()">📋 Канбан</button>
+    <button class="nav-btn" :class="{active:view==='agents'}" @click="view='agents';loadAgentsRoom()">🤖 Агенты</button>
   </nav>
   <div class="hdr-right">
     <span class="time-badge" :class="{stale:staleMins>10}" x-text="timeAgoLabel"></span>
@@ -446,6 +447,42 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
       </div>
     </template>
 
+    <template x-if="view==='agents'">
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;gap:8px;flex-wrap:wrap">
+          <div style="font-size:16px;font-weight:700">🤖 Agent Control Room</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn" @click="loadAgentsRoom()">↻ обновить</button>
+            <a class="btn" href="/agents-room" target="_blank">открыть отдельной страницей</a>
+          </div>
+        </div>
+        <div class="grid" style="grid-template-columns:1fr 1fr">
+          <div class="card">
+            <div class="sec-title" style="margin-bottom:8px">LIVE FEED</div>
+            <template x-if="agentEvents.length===0"><div class="chat-empty">Пока нет событий</div></template>
+            <template x-for="e in agentEvents" :key="e.event_id">
+              <div class="tbl-row" style="display:block">
+                <div><b x-text="e.event_type"></b> · <span x-text="e.status||'—'"></span></div>
+                <div class="act-row" x-text="(e.from_agent||'?') + ' → ' + (e.to_agent||'?')"></div>
+                <div class="board-content" x-text="e.message||''"></div>
+              </div>
+            </template>
+          </div>
+          <div class="card">
+            <div class="sec-title" style="margin-bottom:8px">AGENTS ACTIVITY</div>
+            <template x-if="agentsActivity.length===0"><div class="chat-empty">Пока нет активности</div></template>
+            <template x-for="a in agentsActivity" :key="a.agent">
+              <div class="tbl-row" style="display:block">
+                <div><b x-text="a.agent"></b> · <span x-text="a.current_status||'—'"></span></div>
+                <div class="act-row" x-text="a.current_task||''"></div>
+                <div class="board-content" x-text="(a.last_event_type||'') + ' · ' + (a.last_message||'')"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </template>
+
   </div>
 
   <div class="chat-sidebar" :class="{closed:!chatOpen}">
@@ -537,6 +574,7 @@ function app() {
     chatMessages: {}, chatInput: '', chatLoading: false,
     agentCounts: {},
     boardMessages: [], boardInput: '', boardTarget: 'corp', boardLoading: false,
+    agentEvents: [], agentsActivity: [],
     knowledge: {items: [], summary: {}}, knowledgeFilter: 'all',
     kanbanCards: [], kanbanLayer: 'strategic', kanbanFilter: 'all', kanbanProjectFilter: 'all', kanbanModal: null, draggedCardId: null, newCard: {title:'',description:'',card_type:'task',layer:'strategic',project_id:null,priority:'P2'},
     sections: [
@@ -779,6 +817,12 @@ function app() {
     },
     async loadBoardMessages() {
       this.boardMessages = await fetch('/api/board/messages').then(r=>r.json());
+    },
+    async loadAgentsRoom() {
+      const e = await fetch('/api/agent-events/recent').then(r=>r.json()).catch(()=>({items:[]}));
+      const a = await fetch('/api/agents/activity').then(r=>r.json()).catch(()=>({items:[]}));
+      this.agentEvents = e.items || [];
+      this.agentsActivity = a.items || [];
     },
     async sendBoardMsg() {
       if(!this.boardInput.trim()) return;

@@ -31,6 +31,8 @@ MVP inbox + dashboard runtime on internal disk + Agent Control Room API/UI.
 - Added /agents-room route
 - Page renders and auto-polls every 5s
 - Displays Live feed + Agents activity
+- Integrated "🤖 Агенты" tab into main dashboard nav (index.html)
+- Embedded agents panel in main UI (no hidden URL dependency)
 
 ## Result
 - MVP control room is operational.
