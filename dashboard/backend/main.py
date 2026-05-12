@@ -83,7 +83,18 @@ async def system_metrics():
     except: containers = {}
     try:
         lctl = subprocess.run(['launchctl','list'], capture_output=True, text=True, timeout=5)
-        services = {'hermes': 'hermes' in lctl.stdout, 'a01': 'a01' in lctl.stdout}
+        launchctl_out = lctl.stdout
+        proc_names = []
+        for p in psutil.process_iter(['name', 'cmdline']):
+            cmdline = p.info.get('cmdline') or []
+            if isinstance(cmdline, (list, tuple)):
+                cmdline = " ".join(str(part) for part in cmdline)
+            proc_names.append(f"{p.info.get('name') or ''} {cmdline}")
+        proc_text = "\n".join(proc_names)
+        services = {
+            'hermes': 'hermes' in launchctl_out or 'hermes_cli.main' in proc_text,
+            'a01': 'a01' in launchctl_out or 'a01-cost-controller' in proc_text,
+        }
     except: services = {}
     return {"cpu": round(cpu,1), "ram_gb": round(mem.used/(1024**3),1),
             "ram_total": round(mem.total/(1024**3),1), "ram_pct": round(mem.percent,1),

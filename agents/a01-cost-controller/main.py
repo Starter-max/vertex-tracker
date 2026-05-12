@@ -2,13 +2,21 @@ import asyncio
 import asyncpg
 import redis.asyncio as aioredis
 import os
-import json
 from dotenv import load_dotenv
 
-load_dotenv("/Volumes/256/digital-corp/core/.env")
+load_dotenv("/Volumes/256/digital-corp/core/.env", override=True)
 
-REDIS_URL = "redis://localhost:6379"
-PG_DSN = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@localhost:5432/{os.getenv('POSTGRES_DB')}"
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+PG_DSN = os.getenv(
+    "DATABASE_URL",
+    "postgresql://{user}:{password}@{host}:{port}/{database}".format(
+        user=os.getenv("POSTGRES_USER", "corp"),
+        password=os.getenv("POSTGRES_PASSWORD", ""),
+        host=os.getenv("POSTGRES_HOST", "localhost"),
+        port=os.getenv("POSTGRES_PORT", "5432"),
+        database=os.getenv("POSTGRES_DB", "digitalcorp"),
+    ),
+)
 
 async def main():
     r = aioredis.from_url(REDIS_URL, decode_responses=True)

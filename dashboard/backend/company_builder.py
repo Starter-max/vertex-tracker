@@ -5,7 +5,7 @@ import redis.asyncio as aioredis
 
 BASE = Path('/Volumes/256/digital-corp')
 PROJECTS_DIR = BASE / 'projects'
-PROJECT_COMPANY_PATTERNS = ['создай компанию','набери команду','создай агентов','собери проект','хочу разработать проект','хочу разработать','пусть агенты сделают','нужна команда разработки','создай проектную компанию','подключи сотрудников','добавь скиллы','пробрось в dashboard','собери команду','создай проект','начни разработку','покажи чат агентов','покажи команду','что агенты решили','покажи решения','запусти следующий цикл']
+PROJECT_COMPANY_PATTERNS = ['создай компанию','набери команду','создай агентов','собери проект','хочу разработать проект','хочу разработать','пусть агенты сделают','нужна команда разработки','создай проектную компанию','подключи сотрудников','добавь скиллы','пробрось в dashboard','собери команду','создай проект','начни разработку','покажи чат агентов','покажи команду','что агенты решили','покажи решения','запусти следующий цикл','пауза','паузу','поставь на паузу','удали компанию','удали проект']
 ROLE_LIBRARY = [
  ('project-director','Project Director','достижение результата, координация команды, сроки'),('product-architect','Product Architect','смысл продукта, требования, сценарии, MVP'),('system-architect','System Architect','архитектура, зависимости, интеграции'),('tech-lead','Tech Lead','технические решения, декомпозиция разработки'),('backend-developer','Developer Backend','backend, API, база, интеграции'),('frontend-developer','Developer Frontend','dashboard, UX, интерфейс'),('qa-auditor','QA Auditor','тесты, регрессии, критерии качества'),('security-reviewer','Security Reviewer','секреты, доступы, безопасность'),('documentation-writer','Documentation Writer','документация, changelog, owner summary'),('cost-controller','Cost Controller','бюджет, лимиты, расходы'),('risk-manager','Risk Manager','риски, блокеры, эскалация')]
 
@@ -99,10 +99,10 @@ async def route_project_company(pool, redis_url: str, message: str, source='owne
     t=(message or '').lower(); m=re.search(r'(p_test|p\d+)', t); pid=m.group(1).upper() if m else None
     if 'удали' in t or 'delete' in t: return {'ok':False,'intent_class':'PROJECT_COMPANY_REQUEST','status':'waiting_approval','response':'Нужно подтверждение: удаление проектной компании запрещено без явного approval. A — подтвердить, B — отменить, C — архивировать безопасно.'}
     if ('покажи чат' in t or t.startswith('/чат')) and pid: return {'ok':True,'intent_class':'WORKROOM_VIEW','status':'done','response':(read_workroom(pid,'chat') or 'Workroom не найден.')[:2000]}
-    if ('решени' in t or t.startswith('/решения')) and pid: return {'ok':True,'intent_class':'WORKROOM_DECISIONS','status':'done','response':(read_workroom(pid,'decisions') or 'Решения не найдены.')[:2000]}
+    if (any(x in t for x in ['решени','решил','решила','решили','решило']) or t.startswith('/решения')) and pid: return {'ok':True,'intent_class':'WORKROOM_DECISIONS','status':'done','response':(read_workroom(pid,'decisions') or 'Решения не найдены.')[:2000]}
     if ('спор' in t or t.startswith('/споры')) and pid: return {'ok':True,'intent_class':'WORKROOM_DEBATES','status':'done','response':(read_workroom(pid,'debates') or 'Активных споров нет.')[:2000]}
     if ('команд' in t or t.startswith('/команда')) and pid: return {'ok':True,'intent_class':'PROJECT_TEAM_VIEW','status':'done','response':(read_workroom(pid,'team') or 'Команда не найдена.')[:2000]}
-    if 'пауза' in t and pid:
+    if 'пауз' in t and pid:
         async with pool.acquire() as c: await c.execute("UPDATE projects SET status='paused' WHERE id=$1", pid.lower())
         return {'ok':True,'intent_class':'PROJECT_PAUSE','status':'done','response':f'{pid} поставлен на паузу.'}
     if 'запусти' in t and pid:
