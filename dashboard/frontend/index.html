@@ -36,6 +36,7 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
 .bf{height:3px;border-radius:2px;background:#27ae60;transition:width .5s}
 .bf.w{background:#e67e22}.bf.d{background:#e74c3c}
 .section{margin-bottom:1.25rem}
+.ga-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.ga-card{background:#fff;border:1px solid #e8e8e8;border-radius:14px;padding:1rem;box-shadow:0 1px 8px rgba(0,0,0,.03)}.ga-head{display:flex;gap:10px;align-items:flex-start;margin-bottom:8px}.ga-avatar{width:38px;height:38px;border-radius:12px;background:#f0f6ff;display:flex;align-items:center;justify-content:center;font-size:20px}.ga-title{font-weight:700}.ga-role{font-size:11px;color:#888;line-height:1.35}.ga-line{font-size:12px;color:#555;margin-top:6px;line-height:1.45}.ga-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.status-active{background:#eafaf1;color:#27ae60}.status-thinking{background:#eef6ff;color:#2475aa}.status-waiting{background:#fff4ec;color:#e67e22}.status-idle{background:#f5f5f5;color:#999}.status-error{background:#fdf0f0;color:#e74c3c}.status-paused{background:#f3efff;color:#7d5bd1}.agent-page-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:12px}.timeline-item{padding:.55rem .75rem;border-left:2px solid #ddd;background:#fafafa;margin-bottom:6px;border-radius:0 8px 8px 0}.chat-card{background:#fff;border:1px solid #e8e8e8;border-radius:12px;padding:.9rem;margin-bottom:8px}.chat-line{font-size:12px;line-height:1.5;margin:6px 0;padding:7px 9px;border-radius:8px;background:#f8f8f8}.chat-line.agent{background:#eef6ff}.chat-line.owner{background:#f5f5f5}.chat-line.system{background:#fff4ec}
 .sec-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
 .sec-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#aaa}
 .sec-count{font-size:11px;color:#ccc}
@@ -124,6 +125,7 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
 .board-time{color:#bbb;font-size:10px;float:right}
 .board-content{color:#333;margin-top:2px;font-family:'SF Mono',Monaco,monospace;font-size:11px;word-break:break-all}
 .target-select{font-size:12px;padding:5px 8px;border:1px solid #ddd;border-radius:6px;background:#fff;color:#555;margin-bottom:6px;width:100%}
+.link{color:#3498db;cursor:pointer;text-decoration:none}.link:hover{text-decoration:underline}.skill-chip{font-size:11px;padding:2px 7px;border:1px solid #d8ecff;background:#eef6ff;color:#2475aa;border-radius:999px;cursor:pointer;margin-right:4px;display:inline-block;margin-top:4px}.skill-detail{background:#fff;border:1px solid #e8e8e8;border-radius:12px;padding:1rem;white-space:pre-wrap;font-family:'SF Mono',Monaco,monospace;font-size:12px;line-height:1.55;max-height:70vh;overflow:auto}
 .section-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 14px}
 .stab{font-size:12px;padding:5px 12px;border:1px solid #ddd;border-radius:999px;background:#fff;color:#777;cursor:pointer}
 .stab.active{background:#1a1a1a;color:#fff;border-color:#1a1a1a}
@@ -164,8 +166,10 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
   <nav class="nav">
     <button class="nav-btn" :class="{active:view==='dashboard'}" @click="view='dashboard';detail=null">Обзор</button>
     <button class="nav-btn" :class="{active:view==='settings'}" @click="view='settings';loadSettings()">Настройки</button>
-    <button class="nav-btn" :class="{active:view==='knowledge'}" @click="view='knowledge';loadKnowledge()">🧠 Знания</button>
+    <button class="nav-btn" :class="{active:view==='knowledge'}" @click="view='knowledge';loadKnowledge();loadSkills()">🧠 Знания/скилы</button>
+    <button class="nav-btn" :class="{active:view==='agents'}" @click="view='agents';loadAgents();loadSkills()">🤖 Агенты</button>
     <button class="nav-btn" :class="{active:view==='kanban'}" @click="view='kanban';loadKanban()">📋 Канбан</button>
+    <button class="nav-btn" :class="{active:view==='agentChat'}" @click="openAgentChatPage()">🏛 Чат агентов</button>
   </nav>
   <div class="hdr-right">
     <span class="time-badge" :class="{stale:staleMins>10}" x-text="timeAgoLabel"></span>
@@ -184,6 +188,38 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
         <template x-if="alerts.length>0">
           <div class="alert">⚠️ <span x-text="alerts[0]"></span></div>
         </template>
+
+        <div class="section">
+          <div class="sec-hdr">
+            <span class="sec-title">🏛 Генеральные агенты</span>
+            <button class="btn" @click="loadGeneralAgents()">↻ агенты</button>
+          </div>
+          <div class="ga-grid">
+            <template x-for="a in generalAgents" :key="a.id">
+              <div class="ga-card">
+                <div class="ga-head">
+                  <div class="ga-avatar" x-text="agentIcon(a.id)"></div>
+                  <div style="flex:1">
+                    <div style="display:flex;justify-content:space-between;gap:8px;align-items:start">
+                      <div><div class="ga-title" x-text="a.name"></div><div class="ga-role" x-text="a.role"></div></div>
+                      <span class="badge" :class="agentStatusClass(a.status)" x-text="agentStatusLabel(a.status)"></span>
+                    </div>
+                    <div class="ga-role" x-text="a.short_description"></div>
+                  </div>
+                </div>
+                <div class="ga-line"><b>Сейчас:</b> <span x-text="a.current_task_title || 'нет активной задачи'"></span></div>
+                <div class="ga-line"><b>В работе:</b> <span x-text="workDuration(a)"></span> · <b>активность:</b> <span x-text="relTime(a.last_activity_at)"></span></div>
+                <div class="ga-line"><b>Следующее:</b> <span x-text="a.current_task_next_step || a.metadata?.next_step || '—'"></span></div>
+                <div class="ga-line"><b>Задача:</b> <span class="link" @click="openKanbanTask(a.current_task_id)" x-text="a.current_task_id || '—'"></span> <span x-text="a.current_task_priority||''"></span></div>
+                <div class="ga-actions">
+                  <button class="btn primary" @click="openAgent(a.id)">Открыть агента</button>
+                  <button class="btn" @click="openAgentDirectChat(a.id)">Написать</button>
+                  <button class="btn" :disabled="!a.current_task_id" @click="openKanbanTask(a.current_task_id)">Открыть задачу</button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
 
         <div class="sys">
           <div class="sys-card">
@@ -301,7 +337,17 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
           </div>
           <template x-for="item in filteredKnowledge()" :key="item.id">
             <div class="tbl-row">
-              <div><div x-text="item.name"></div><div style="font-size:11px;color:#bbb" x-text="item.category"></div></div>
+              <div>
+                <div>
+                  <template x-if="skillNameFromKnowledge(item)">
+                    <span class="link" @click="openSkill(skillNameFromKnowledge(item))" x-text="item.name"></span>
+                  </template>
+                  <template x-if="!skillNameFromKnowledge(item)">
+                    <span x-text="item.name"></span>
+                  </template>
+                </div>
+                <div style="font-size:11px;color:#bbb" x-text="item.category"></div>
+              </div>
               <div style="font-family:'SF Mono',Monaco,monospace;font-size:12px" x-text="item.current_version||'—'"></div>
               <div style="font-family:'SF Mono',Monaco,monospace;font-size:12px;color:#666" x-text="item.latest_version||'—'"></div>
               <div x-text="knowledgeIcon(item.status)+' '+item.status"></div>
@@ -393,6 +439,75 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
       </div>
     </template>
 
+    <template x-if="view==='agents'">
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;gap:8px;flex-wrap:wrap">
+          <div style="font-size:16px;font-weight:700">🤖 Агенты корпорации</div>
+          <div class="kb-toolbar" style="margin:0">
+            <select class="kb-filter" x-model="agentFilterStatus"><option value="all">Все статусы</option><option value="active">active</option><option value="thinking">thinking</option><option value="waiting">waiting</option><option value="idle">idle</option></select>
+            <input class="kb-filter" x-model="agentFilterSkill" placeholder="Фильтр по скилу">
+            <button class="btn" @click="loadAgents();loadSkills()">↻ обновить</button>
+          </div>
+        </div>
+        <div class="tbl">
+          <div class="tbl-row" style="background:#f9f9f9;font-weight:700;text-transform:uppercase;font-size:11px;color:#aaa">
+            <span>Агент</span><span>Текущая задача</span><span>Статус</span><span>Скилы / действия</span>
+          </div>
+          <template x-for="a in filteredAgents()" :key="a.id">
+            <div class="tbl-row" style="align-items:flex-start;gap:12px">
+              <div style="min-width:190px"><div class="link" style="font-weight:700" @click="openAgent(a.id)" x-text="agentIcon(a.id)+' '+(a.name || a.id)"></div><div style="font-size:11px;color:#bbb" x-text="a.id + ' · ' + (a.role||'')"></div></div>
+              <div><div class="link" @click="openKanbanTask(a.current_task_id)" x-text="a.current_task_title||'—'"></div><div style="font-size:11px;color:#bbb" x-text="a.current_task_id||''"></div></div>
+              <span class="badge" :class="agentStatusClass(a.status)" x-text="agentStatusLabel(a.status) + ' · ' + relTime(a.last_activity_at||a.last_heartbeat)"></span>
+              <div style="max-width:360px">
+                <template x-for="sk in (a.skills||agentSkills(a)||[])" :key="sk"><span class="skill-chip" @click="openSkill(sk)" x-text="sk"></span></template>
+                <div class="ga-actions"><button class="btn primary" @click="openAgent(a.id)">профиль</button><button class="btn" @click="openAgentDirectChat(a.id)">написать</button></div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+
+    <template x-if="view==='agentDetail' && selectedAgent">
+      <div>
+        <div class="detail-hdr"><button class="btn" @click="view='agents'">← к агентам</button><span style="font-size:16px;font-weight:700" x-text="selectedAgent.agent.name"></span><span class="badge" :class="agentStatusClass(selectedAgent.agent.status)" x-text="agentStatusLabel(selectedAgent.agent.status)" style="margin-left:auto"></span></div>
+        <div class="agent-page-grid">
+          <div>
+            <div class="detail-wrap" style="margin-bottom:12px"><div class="sec-title">Профиль агента</div><div class="ga-line" x-text="selectedAgent.agent.full_description||selectedAgent.agent.short_description"></div><div class="ga-line"><b>Роль:</b> <span x-text="selectedAgent.agent.role"></span></div><div class="ga-line"><b>Тип:</b> <span x-text="selectedAgent.agent.type"></span></div><div class="ga-line"><b>Проект:</b> <span x-text="selectedAgent.agent.project_id||'—'"></span></div><div class="ga-line"><b>Текущая задача:</b> <span class="link" @click="openKanbanTask(selectedAgent.agent.current_task_id)" x-text="selectedAgent.agent.current_task_id||'—'"></span></div></div>
+            <div class="detail-wrap" style="margin-bottom:12px"><div class="sec-title">Мандат</div><template x-for="m in selectedAgent.agent.mandate||[]"><div class="ga-line">• <span x-text="m"></span></div></template></div>
+            <div class="detail-wrap"><div class="sec-title">Ограничения</div><template x-for="r in selectedAgent.agent.restrictions||[]"><div class="ga-line">• <span x-text="r"></span></div></template></div>
+          </div>
+          <div>
+            <div class="detail-wrap" style="margin-bottom:12px"><div class="sec-title">Скилы</div><template x-for="sk in selectedAgent.agent.skills||[]"><span class="skill-chip" @click="openSkill(sk)" x-text="sk"></span></template></div>
+            <div class="detail-wrap" style="margin-bottom:12px"><div class="sec-title">Активные задачи / очередь</div><template x-for="t in selectedAgent.tasks||[]"><div class="ga-line"><span class="link" @click="openKanbanTask(t.id)" x-text="t.title"></span><br><span style="color:#bbb" x-text="t.status+' · '+t.priority"></span></div></template></div>
+            <div class="detail-wrap"><div class="sec-title">Журнал активности</div><template x-for="ev in selectedAgent.activity||[]"><div class="timeline-item"><b x-text="ev.event_type"></b><div x-text="ev.text"></div><div style="font-size:10px;color:#bbb" x-text="fmtTime(ev.created_at)"></div></div></template></div>
+            <div class="ga-actions"><button class="btn primary" @click="openAgentDirectChat(selectedAgent.agent.id)">Написать агенту</button><button class="btn" @click="openAgentChatPage()">Общий чат</button></div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <template x-if="view==='agentChat'">
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem"><div style="font-size:16px;font-weight:700" x-text="agentChatTitle"></div><button class="btn" @click="loadAgentChatMessages(currentAgentChatId)">↻ обновить</button></div>
+        <div class="chat-card">
+          <template x-for="m in agentChatMessages" :key="m.id"><div class="chat-line" :class="m.sender_type"><b x-text="m.sender_id"></b>: <span x-text="m.text"></span><div style="font-size:10px;color:#bbb" x-text="(m.message_type||'message')+' · '+fmtTime(m.created_at)+' · '+(m.task_id||'')"></div></div></template>
+          <template x-if="agentChatMessages.length===0"><div class="chat-empty">Чат пока пуст</div></template>
+        </div>
+        <div class="chat-card"><textarea class="chat-textarea" style="width:100%;max-height:160px" x-model="agentChatInput" placeholder="Сообщение агенту или в общий чат..." rows="3"></textarea><div class="ga-actions"><button class="btn primary" @click="sendAgentChatMessage()" :disabled="!agentChatInput.trim()">Отправить</button><button class="btn" @click="createTaskFromAgentChat()">Создать задачу из сообщения</button><button class="btn" @click="openAgentChatPage()">В общий чат</button></div></div>
+      </div>
+    </template>
+
+    <template x-if="view==='skill'">
+      <div>
+        <div class="detail-hdr">
+          <button class="btn" @click="view='knowledge';skillDetail=null">← к скилам</button>
+          <span style="font-size:16px;font-weight:700" x-text="'Skill: '+(skillDetail?.name||'')"></span>
+        </div>
+        <div class="skill-detail" x-text="skillDetail?.content || 'Скил не загружен'"></div>
+      </div>
+    </template>
+
     <template x-if="view==='kanban'">
       <div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;gap:8px;flex-wrap:wrap">
@@ -434,6 +549,15 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
                       <span x-text="card.card_type"></span>
                       <span class="kb-time" :class="timeClass(card.time_in_stage_hrs)" x-text="card.time_in_stage"></span>
                     </div>
+                    <div class="ga-line" x-show="card.assigned_agent_id || card.curator_agent_id">
+                      <span class="link" @click.stop="openAgent(card.assigned_agent_id)" x-text="card.assigned_agent_id ? '👤 '+card.assigned_agent_id : ''"></span>
+                      <span x-show="card.curator_agent_id"> · куратор: </span><span class="link" @click.stop="openAgent(card.curator_agent_id)" x-text="card.curator_agent_id||''"></span>
+                    </div>
+                    <div x-show="(card.required_skills||[]).length">
+                      <template x-for="sk in card.required_skills||[]" :key="sk"><span class="skill-chip" @click.stop="openSkill(sk)" x-text="sk"></span></template>
+                    </div>
+                    <div class="ga-line" x-show="card.next_step"><b>Следующее:</b> <span x-text="card.next_step"></span></div>
+                    <div class="ga-line" x-show="card.requires_owner_action || card.blocked_reason" style="color:#e67e22" x-text="card.requires_owner_action ? '⚠ нужен ответ владельца' : '⛔ '+card.blocked_reason"></div>
                   </div>
                 </template>
                 <div style="font-size:11px;color:#bbb;text-align:center;padding:10px 0" x-show="cardsForColumn(col.id).length===0">Пусто</div>
@@ -446,6 +570,13 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
             <div class="kb-modal">
               <h3 x-text="kanbanModal.title"></h3>
               <div style="font-size:12px;color:#666;line-height:1.6" x-text="kanbanModal.description||'—'"></div>
+              <div class="chat-card" style="background:#fafafa">
+                <div class="ga-line"><b>Исполнитель:</b> <span class="link" @click="openAgent(kanbanModal.assigned_agent_id)" x-text="kanbanModal.assigned_agent_id||kanbanModal.agent_id||'—'"></span></div>
+                <div class="ga-line"><b>Куратор:</b> <span class="link" @click="openAgent(kanbanModal.curator_agent_id)" x-text="kanbanModal.curator_agent_id||'—'"></span></div>
+                <div class="ga-line"><b>Следующий шаг:</b> <span x-text="kanbanModal.next_step||'—'"></span></div>
+                <div class="ga-line"><b>Обсуждение:</b> <span class="link" @click="currentAgentChatId=kanbanModal.agent_discussion_id;agentChatTitle='Обсуждение задачи: '+kanbanModal.id;view='agentChat';loadAgentChatMessages(currentAgentChatId)" x-text="kanbanModal.agent_discussion_id||'—'"></span></div>
+                <div style="margin-top:6px"><template x-for="sk in kanbanModal.required_skills||[]" :key="sk"><span class="skill-chip" @click="openSkill(sk)" x-text="sk"></span></template></div>
+              </div>
               <div class="kb-status-btns">
                 <template x-for="col in kanbanColumns()" :key="col.id">
                   <button class="kb-layer-btn" @click="moveCard(kanbanModal.id,col.id)" x-text="col.label"></button>
@@ -544,11 +675,11 @@ function app() {
     view: 'dashboard', projects: [], sys: {cpu:0,ram_gb:0,ram_total:16,ram_pct:0,disk_pct:0,disk_free:''},
     detail: null, alerts: [], totalCost: 0, loading: false,
     lastUpdateTs: null, staleMins: 0, timeAgoLabel: '—',
-    settings: {},
+    settings: {}, agents: [], generalAgents: [], selectedAgent: null, skills: [], skillDetail: null,
     chatOpen: false, chatSessions: [], activeChatId: null,
     chatMessages: {}, chatInput: '', chatLoading: false,
     agentCounts: {}, workroomKind: 'chat', workroomContent: '',
-    boardMessages: [], boardInput: '', boardTarget: 'corp', boardLoading: false,
+    boardMessages: [], boardInput: '', boardTarget: 'corp', boardLoading: false, agentFilterStatus:'all', agentFilterSkill:'', currentAgentChatId:'global-agents-chat', agentChatTitle:'Общий чат агентов', agentChatMessages:[], agentChatInput:'',
     knowledge: {items: [], summary: {}}, knowledgeFilter: 'all',
     kanbanCards: [], kanbanLayer: 'strategic', kanbanFilter: 'all', kanbanProjectFilter: 'all', kanbanModal: null, draggedCardId: null, newCard: {title:'',description:'',card_type:'task',layer:'strategic',project_id:null,priority:'P2'},
     sections: [
@@ -568,6 +699,7 @@ function app() {
       await this.loadChatSessions();
       await this.loadAgentCounts();
       await this.loadBoardMessages();
+      await this.loadGeneralAgents();
     },
 
     async load() {
@@ -584,6 +716,7 @@ function app() {
         this.lastUpdateTs = new Date();
         this.updateTimeAgo();
         this.alerts = projR.filter(p=>p.status==='error').map(p=>p.id.toUpperCase()+': проблема с агентом');
+        await this.loadGeneralAgents();
         if(this.detail) await this.loadDetail(this.detail.id);
       } catch(e) { this.alerts = ['ошибка загрузки']; }
       this.loading = false;
@@ -673,6 +806,40 @@ function app() {
     async deleteCard(id) { if (!confirm('Удалить карточку?')) return; await fetch('/api/kanban/' + id, {method:'DELETE'}); this.kanbanModal = null; await this.loadKanban(); },
     async loadKnowledge() {
       this.knowledge = await fetch('/api/knowledge').then(r=>r.json());
+    },
+
+    async loadAgents() {
+      this.agents = await fetch('/api/agents').then(r=>r.json());
+    },
+
+    async loadSkills() {
+      this.skills = await fetch('/api/skills').then(r=>r.json()).catch(()=>[]);
+    },
+
+    async openSkill(name) {
+      if(!name) return;
+      this.skillDetail = await fetch('/api/skills/'+encodeURIComponent(name)).then(r=>r.json());
+      this.view = 'skill';
+    },
+
+    skillNameFromKnowledge(item) {
+      if(!item) return '';
+      const n = (item.name || item.id || '').toLowerCase().replace(/[^a-z0-9_-]+/g,'-').replace(/^-|-$/g,'');
+      const found = this.skills.find(s => s.name === item.name || s.name === item.id || s.name === n || s.id === n);
+      return found ? found.name : (item.category === 'skill' ? n : '');
+    },
+
+    agentSkills(agent) {
+      const hay = ((agent.id||'')+' '+(agent.name||'')+' '+(agent.role||'')).toLowerCase();
+      const names = [];
+      if(hay.includes('cost') || hay.includes('controller') || hay.includes('a01')) names.push('cost-reporter');
+      if(hay.includes('research') || hay.includes('a06')) names.push('llm-wiki');
+      if(hay.includes('dispatcher') || hay.includes('hermes') || hay.includes('a04')) names.push('master-router');
+      if(hay.includes('git')) names.push('git-manager');
+      if(hay.includes('dashboard') || hay.includes('a08')) names.push('system-status');
+      if(hay.includes('quality') || hay.includes('audit')) names.push('requesting-code-review');
+      if(hay.includes('risk')) names.push('systematic-debugging');
+      return [...new Set(names)].filter(n => this.skills.length===0 || this.skills.some(s => s.name === n));
     },
 
     async refreshKnowledge() {
@@ -819,6 +986,27 @@ function app() {
       if(!c) return [];
       return Array.from({length:c.total},(_,i)=>i<c.active?'ok':'idle');
     },
+
+    async loadGeneralAgents() {
+      this.generalAgents = await fetch('/api/agents/general').then(r=>r.json()).catch(()=>[]);
+    },
+    filteredAgents() {
+      let a = this.agents || [];
+      if(this.agentFilterStatus !== 'all') a = a.filter(x => x.status === this.agentFilterStatus);
+      if(this.agentFilterSkill.trim()) a = a.filter(x => (x.skills||[]).includes(this.agentFilterSkill.trim()));
+      return a;
+    },
+    agentIcon(id) { return {pepe:'🐸',anton:'🛠',katya:'👥'}[id] || '🤖'; },
+    agentStatusLabel(s) { return {active:'Активен',thinking:'Думает',waiting:'Ждёт',idle:'Свободен',error:'Ошибка',paused:'Пауза'}[s] || s || '—'; },
+    agentStatusClass(s) { return 'status-' + (s || 'idle'); },
+    workDuration(a) { const iso=a?.active_since||a?.current_task_started_at; if(!iso) return '—'; const mins=Math.floor((new Date()-new Date(iso))/60000); if(mins<60) return mins+' мин'; return Math.floor(mins/60)+' ч '+(mins%60)+' мин'; },
+    async openAgent(id) { this.selectedAgent = await fetch('/api/agents/'+encodeURIComponent(id)).then(r=>r.json()); this.view='agentDetail'; },
+    openAgentChatPage() { this.currentAgentChatId='global-agents-chat'; this.agentChatTitle='Общий чат агентов'; this.view='agentChat'; this.loadAgentChatMessages(this.currentAgentChatId); },
+    async openAgentDirectChat(id) { this.currentAgentChatId='chat-agent-'+id; this.agentChatTitle='Личный чат: '+id; this.view='agentChat'; await this.loadAgentChatMessages(this.currentAgentChatId); },
+    async loadAgentChatMessages(chatId) { this.agentChatMessages = await fetch('/api/agent-chats/'+encodeURIComponent(chatId)+'/messages').then(r=>r.json()).catch(()=>[]); },
+    async sendAgentChatMessage() { if(!this.agentChatInput.trim()) return; await fetch('/api/agent-chats/'+encodeURIComponent(this.currentAgentChatId)+'/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:this.agentChatInput})}); this.agentChatInput=''; await this.loadAgentChatMessages(this.currentAgentChatId); },
+    async createTaskFromAgentChat() { const title=this.agentChatInput.trim() || prompt('Название задачи'); if(!title) return; await fetch('/api/agent-chats/'+encodeURIComponent(this.currentAgentChatId)+'/create-task',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,description:'Создано из чата агентов'})}); await this.loadAgentChatMessages(this.currentAgentChatId); await this.loadKanban(); },
+    async openKanbanTask(id) { if(!id) return; this.view='kanban'; await this.loadKanban(); const card=this.kanbanCards.find(c=>c.id===id); if(card) this.kanbanModal=card; },
     fmtTime(iso) {
       if(!iso) return '';
       const d = new Date(iso);

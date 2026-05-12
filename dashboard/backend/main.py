@@ -5,7 +5,8 @@ from collections import defaultdict
 from pydantic import BaseModel
 from pathlib import Path
 from datetime import datetime
-import asyncpg, psutil, subprocess, asyncio, os, uuid, httpx, redis.asyncio as aioredis
+from typing import Optional, List
+import asyncpg, psutil, subprocess, asyncio, os, uuid, json, httpx, redis.asyncio as aioredis
 from dotenv import load_dotenv
 from company_builder import is_project_company_request, route_project_company, read_workroom
 
@@ -21,6 +22,28 @@ FRONTEND = Path("/Volumes/256/digital-corp/dashboard/frontend/index.html")
 UPLOADS = Path("/Volumes/256/digital-corp/dashboard/uploads")
 UPLOADS.mkdir(exist_ok=True)
 pool = None
+
+async def apply_general_agents_migration():
+    path = Path("/Volumes/256/digital-corp/core/migrations/007_general_agents.sql")
+    if path.exists():
+        async with pool.acquire() as c:
+            await c.execute(path.read_text())
+
+def _jsonable(row):
+    d = dict(row)
+    json_fields = {
+        'mandate', 'restrictions', 'skills', 'metadata', 'required_skills',
+        'agent_status_snapshot', 'decision_options', 'tags'
+    }
+    for k, v in list(d.items()):
+        if isinstance(v, datetime):
+            d[k] = v.isoformat()
+        elif k in json_fields and isinstance(v, str):
+            try:
+                d[k] = json.loads(v)
+            except Exception:
+                pass
+    return d
 
 async def ensure_seeded():
     async with pool.acquire() as c:
@@ -62,6 +85,7 @@ wsman = WsManager()
 async def lifespan(app):
     global pool
     pool = await asyncpg.create_pool(**DB, min_size=2, max_size=10)
+    await apply_general_agents_migration()
     await ensure_seeded()
     yield
     await pool.close()
@@ -211,6 +235,47 @@ class KanbanCardBody(BaseModel):
 class StatusBody(BaseModel):
     status: str
 
+
+
+def _skill_summary_from_path(path: Path):
+    text = path.read_text(errors="ignore")
+    lines = text.splitlines()
+    name = path.parent.name
+    desc = ""
+    in_frontmatter = lines[:1] == ["---"]
+    for line in lines[:80]:
+        if line.startswith("name:"):
+            name = line.split(":",1)[1].strip().strip('"') or name
+        elif line.startswith("description:"):
+            desc = line.split(":",1)[1].strip().strip('"')
+    return {"id": name, "name": name, "description": desc, "path": str(path)}
+
+@app.get("/api/skills")
+async def list_skills():
+    roots = [Path("/Users/admin/.hermes/skills"), Path("/Volumes/256/digital-corp/skills")]
+    out = []
+    seen = set()
+    for root in roots:
+        if not root.exists():
+            continue
+        for md in root.rglob("SKILL.md"):
+            item = _skill_summary_from_path(md)
+            if item["name"] not in seen:
+                seen.add(item["name"]); out.append(item)
+    return sorted(out, key=lambda x: x["name"])
+
+@app.get("/api/skills/{skill_name}")
+async def get_skill(skill_name: str):
+    safe = skill_name.replace("..", "").replace("/", "").replace("\\", "")
+    for root in [Path("/Users/admin/.hermes/skills"), Path("/Volumes/256/digital-corp/skills")]:
+        if not root.exists():
+            continue
+        for md in root.rglob("SKILL.md"):
+            item = _skill_summary_from_path(md)
+            if item["name"] == safe or md.parent.name == safe:
+                return {**item, "content": md.read_text(errors="ignore")[:20000]}
+    raise HTTPException(404, "skill not found")
+
 @app.get("/api/kanban")
 async def get_kanban(layer: str = "strategic", project_id: str = None, card_type: str = None):
     async with pool.acquire() as c:
@@ -226,8 +291,8 @@ async def get_kanban(layer: str = "strategic", project_id: str = None, card_type
     cards = []
     now = datetime.now().astimezone()
     for r in rows:
-        d = dict(r)
-        moved_at = d.get('moved_at')
+        d = _jsonable(r)
+        moved_at = r.get('moved_at')
         if moved_at:
             delta = now - moved_at
             hrs = int(delta.total_seconds() // 3600)
@@ -363,13 +428,120 @@ async def serve(): return _HTMLResponse(content=FRONTEND.read_text(), media_type
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 @app.get("/api/agents")
-async def get_agents(project_id: str = None):
+async def get_agents(project_id: str = None, type: str = None, status: str = None, skill: str = None):
     async with pool.acquire() as c:
+        q = """
+            SELECT a.*,
+                   kc.title AS current_task_title, kc.status AS current_task_status,
+                   kc.priority AS current_task_priority, kc.project_id AS current_task_project_id,
+                   kc.next_step AS current_task_next_step, kc.started_at AS current_task_started_at,
+                   COALESCE((SELECT COUNT(*) FROM kanban_cards qk WHERE qk.assigned_agent_id=a.id AND qk.status IN ('planned','queue','idea')),0) AS queue_count
+            FROM agents a
+            LEFT JOIN kanban_cards kc ON kc.id=a.current_task_id
+            WHERE 1=1
+        """
+        params = []
         if project_id:
-            rows = await c.fetch("SELECT * FROM agents WHERE project_id=$1 ORDER BY id", project_id)
-        else:
-            rows = await c.fetch("SELECT * FROM agents ORDER BY project_id, id")
-    return [dict(r) for r in rows]
+            params.append(project_id); q += f" AND a.project_id=${len(params)}"
+        if type:
+            params.append(type); q += f" AND a.type=${len(params)}"
+        if status:
+            params.append(status); q += f" AND a.status=${len(params)}"
+        if skill:
+            params.append(skill); q += f" AND a.skills ? ${len(params)}"
+        rows = await c.fetch(q + " ORDER BY CASE WHEN a.type LIKE 'general_agent%' THEN 0 ELSE 1 END, a.id", *params)
+    return [_jsonable(r) for r in rows]
+
+@app.get("/api/agents/general")
+async def get_general_agents():
+    async with pool.acquire() as c:
+        rows = await c.fetch("""
+            SELECT a.*, kc.title AS current_task_title, kc.status AS current_task_status,
+                   kc.priority AS current_task_priority, kc.project_id AS current_task_project_id,
+                   kc.next_step AS current_task_next_step, kc.started_at AS current_task_started_at,
+                   kc.agent_discussion_id AS current_task_discussion_id,
+                   COALESCE((SELECT COUNT(*) FROM kanban_cards qk WHERE qk.assigned_agent_id=a.id AND qk.status IN ('planned','queue','idea')),0) AS queue_count
+            FROM agents a
+            LEFT JOIN kanban_cards kc ON kc.id=a.current_task_id
+            WHERE a.type LIKE 'general_agent%'
+            ORDER BY CASE a.id WHEN 'pepe' THEN 1 WHEN 'anton' THEN 2 WHEN 'katya' THEN 3 ELSE 9 END
+        """)
+    return [_jsonable(r) for r in rows]
+
+@app.get("/api/agents/{agent_id}")
+async def get_agent(agent_id: str):
+    async with pool.acquire() as c:
+        a = await c.fetchrow("SELECT * FROM agents WHERE id=$1 OR slug=$1", agent_id)
+        if not a: raise HTTPException(404, "agent not found")
+        tasks = await c.fetch("SELECT * FROM kanban_cards WHERE assigned_agent_id=$1 OR agent_id=$1 ORDER BY moved_at DESC LIMIT 50", a['id'])
+        activity = await c.fetch("SELECT * FROM agent_activity_log WHERE agent_id=$1 ORDER BY created_at DESC LIMIT 50", a['id'])
+        chats = await c.fetch("SELECT * FROM agent_chats WHERE agent_id=$1 OR id='global-agents-chat' ORDER BY created_at", a['id'])
+    return {"agent": _jsonable(a), "tasks": [_jsonable(r) for r in tasks], "activity": [_jsonable(r) for r in activity], "chats": [_jsonable(r) for r in chats]}
+
+@app.get("/api/agent-chats/{chat_id}/messages")
+async def get_agent_chat_messages(chat_id: str):
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT * FROM agent_messages WHERE chat_id=$1 ORDER BY created_at ASC LIMIT 300", chat_id)
+    return [_jsonable(r) for r in rows]
+
+class AgentMsgBody(BaseModel):
+    text: str
+    sender_type: str = "owner"
+    sender_id: str = "owner"
+    message_type: str = "owner_message"
+    task_id: Optional[str] = None
+    project_id: Optional[str] = None
+
+@app.post("/api/agent-chats/{chat_id}/messages")
+async def post_agent_chat_message(chat_id: str, body: AgentMsgBody):
+    mid = "msg-" + str(uuid.uuid4())[:12]
+    async with pool.acquire() as c:
+        chat = await c.fetchrow("SELECT * FROM agent_chats WHERE id=$1", chat_id)
+        if not chat: raise HTTPException(404, "chat not found")
+        await c.execute("""
+            INSERT INTO agent_messages(id,chat_id,sender_type,sender_id,text,message_type,task_id,project_id)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+        """, mid, chat_id, body.sender_type, body.sender_id, body.text, body.message_type, body.task_id or chat['task_id'], body.project_id or chat['project_id'])
+        if body.sender_type == 'owner' and chat['agent_id']:
+            await c.execute("""
+                INSERT INTO agent_activity_log(id,agent_id,event_type,task_id,project_id,text)
+                VALUES($1,$2,'message_sent',$3,$4,$5)
+            """, "log-" + str(uuid.uuid4())[:12], chat['agent_id'], body.task_id or chat['task_id'], body.project_id or chat['project_id'], "Владелец написал агенту: " + body.text[:180])
+    return {"ok": True, "id": mid}
+
+class TaskFromMessageBody(BaseModel):
+    title: str
+    description: str = ""
+    agent_id: Optional[str] = None
+    curator_agent_id: Optional[str] = "pepe"
+    project_id: Optional[str] = "corp"
+    priority: str = "P2"
+    required_skills: List[str] = []
+
+@app.post("/api/agent-chats/{chat_id}/create-task")
+async def create_task_from_agent_chat(chat_id: str, body: TaskFromMessageBody):
+    cid = "task-" + str(uuid.uuid4())[:10]
+    async with pool.acquire() as c:
+        chat = await c.fetchrow("SELECT * FROM agent_chats WHERE id=$1", chat_id)
+        if not chat: raise HTTPException(404, "chat not found")
+        await c.execute("""
+            INSERT INTO kanban_cards(id,title,description,card_type,layer,project_id,agent_id,status,priority,tags,assigned_agent_id,curator_agent_id,required_skills,agent_discussion_id,next_step)
+            VALUES($1,$2,$3,'task','operational',$4,$5,'queue',$6,ARRAY['agent-chat'],$5,$7,$8,$9,'Уточнить первый исполнимый шаг')
+        """, cid, body.title, body.description, body.project_id, body.agent_id or chat['agent_id'], body.priority, body.curator_agent_id, body.required_skills, chat_id)
+        if body.agent_id or chat['agent_id']:
+            await c.execute("INSERT INTO agent_activity_log(id,agent_id,event_type,task_id,project_id,text) VALUES($1,$2,'task_created',$3,$4,$5)", "log-" + str(uuid.uuid4())[:12], body.agent_id or chat['agent_id'], cid, body.project_id, "Создана задача из сообщения чата: " + body.title)
+    return {"ok": True, "id": cid}
+
+@app.get("/api/agent-activity")
+async def get_agent_activity(agent_id: str = None, task_id: str = None):
+    async with pool.acquire() as c:
+        q = "SELECT * FROM agent_activity_log WHERE 1=1"; params=[]
+        if agent_id:
+            params.append(agent_id); q += f" AND agent_id=${len(params)}"
+        if task_id:
+            params.append(task_id); q += f" AND task_id=${len(params)}"
+        rows = await c.fetch(q + " ORDER BY created_at DESC LIMIT 100", *params)
+    return [_jsonable(r) for r in rows]
 
 @app.get("/api/agents/counts")
 async def agent_counts():
