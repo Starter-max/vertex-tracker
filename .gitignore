@@ -23,3 +23,37 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Digital Corp backup/versioning safety
+.env.*
+!.env.example
+auth.json
+*token*
+*secret*
+*.key
+*.pem
+*.p12
+*.sqlite
+*.db
+*.dump
+*.sql
+*.tar
+*.tar.gz
+*.tar.zst
+*.zip
+*.7z
+backups/
+backup/
+!ops/backup/
+!ops/backup/backup-digital-corp.sh
+!ops/backup/backup-config.example.env
+digital-corp-backups/
+logs/
+node_modules/
+.venv/
+venv/
+__pycache__/
+.cache/
+tmp/
+temp/
+*.tmp
