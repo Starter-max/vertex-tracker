@@ -88,3 +88,4 @@ launchctl list | grep com.digitalcorp.backup
 - Git не заменяет полный бэкап.
 - Архив не заменяет Git.
 - На macOS launchd может требовать Full Disk Access / Removable Volumes permissions для доступа к /Volumes/256. Ручной запуск скрипта подтверждён, но автоматический launchd запуск сейчас упирается в Operation not permitted при чтении маркера.
+- До исправления macOS permissions настроен временный Hermes cron fallback `digital-corp-backup-fallback-30m` каждые 30 минут. Он запускает тот же backup-скрипт без LLM, молчит при успехе и отправляет сообщение только при ошибке.
