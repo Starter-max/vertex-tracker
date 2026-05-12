@@ -10,7 +10,11 @@ import asyncpg, psutil, subprocess, asyncio, os, uuid, json, httpx, redis.asynci
 from dotenv import load_dotenv
 from company_builder import is_project_company_request, route_project_company, read_workroom
 
-load_dotenv("/Volumes/256/digital-corp/core/.env", override=True)
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+CORE_DIR = PROJECT_ROOT / "core"
+LOGS_DIR = PROJECT_ROOT / "logs"
+LOGS_DIR.mkdir(exist_ok=True)
+load_dotenv(CORE_DIR / ".env", override=True)
 DB = {
     "user": os.getenv('POSTGRES_USER'),
     "password": os.getenv('POSTGRES_PASSWORD'),
@@ -18,13 +22,13 @@ DB = {
     "host": "localhost",
     "port": 5432,
 }
-FRONTEND = Path("/Volumes/256/digital-corp/dashboard/frontend/index.html")
-UPLOADS = Path("/Volumes/256/digital-corp/dashboard/uploads")
+FRONTEND = PROJECT_ROOT / "dashboard" / "frontend" / "index.html"
+UPLOADS = PROJECT_ROOT / "dashboard" / "uploads"
 UPLOADS.mkdir(exist_ok=True)
 pool = None
 
 async def apply_general_agents_migration():
-    path = Path("/Volumes/256/digital-corp/core/migrations/007_general_agents.sql")
+    path = CORE_DIR / "migrations" / "007_general_agents.sql"
     if path.exists():
         async with pool.acquire() as c:
             await c.execute(path.read_text())
@@ -66,6 +70,54 @@ async def ensure_seeded():
               ('p04-sys-001','Mental Flow System MVP','Build the personal mental-flow app with capture, review, buckets, settings, admin users and Claude sorting.','feature','strategic','p04',NULL,'in_progress','P1',ARRAY['nextjs','pwa','claude']),
               ('p04-sys-002','Telegram admin bot','Add user management, edit flows, and owner onboarding for the bot.','feature','operational','p04',NULL,'planned','P1',ARRAY['telegram','admin'])
             ON CONFLICT (id) DO NOTHING
+        """)
+        await c.execute("""
+            INSERT INTO settings(key,value,group_name,label)
+            VALUES
+              ('owner_mode','CEO / заказчик, не оператор','general','Режим владельца'),
+              ('dashboard_entrypoint','/dashboard','general','Главная точка входа'),
+              ('level0_goal','Верхний слой показывает субъектов работы: Пепе управляет, Антон строит, Катя собирает агентов и скилы. Каждое решение должно уменьшать экранное время владельца.','general','Цель уровня 0'),
+              ('screen_time_rule','Любое решение проверять вопросом: уменьшает ли это время владельца у экрана? Если увеличивает ручной контроль, постоянный мониторинг или технические детали для владельца — решение плохое.','rules','Правило экранного времени'),
+              ('owner_escalation_rules','Эскалировать владельцу только важное: риск денег, риск данных, продакшен, секреты, необратимые изменения, нехватка решения. Не тревожить владельца мелкими техническими шагами.','rules','Правила эскалации владельцу'),
+              ('autonomous_execution_policy','Продолжать автономно до завершения задачи. Останавливаться только при серьёзном блокере, разрушительном действии, изменении секретов/.env, удалении данных, расходах сверх лимита или выкладке в продакшен.','rules','Автономное выполнение'),
+              ('progress_blocks_policy','Во время длинной работы показывать короткие блоки: что делаю сейчас, что проверяю, какой результат. Не превращать владельца в оператора.','rules','Краткие прогресс-блоки'),
+              ('completion_audio_signal','for i in 1 2 3; do afplay /System/Library/Sounds/Glass.aiff; sleep .25; done','rules','3 звуковых сигнала после важного terminal-завершения'),
+              ('general_agents','pepe,anton,katya','agents','Стартовые генеральные агенты'),
+              ('pepe_mandate','Пепе — управляющий Hermes: принимает задачи, классифицирует, назначает агентов, связывает с канбаном, контролирует зависания, эскалирует только важное.','agents','Мандат Пепе'),
+              ('anton_mandate','Антон — внутренняя ИТ-компания: архитектура, backend, frontend, БД, интеграции, диагностика, тестирование, безопасность, документация и безопасный запуск.','agents','Мандат Антона'),
+              ('katya_mandate','Катя — HR-компания агентов: роли, мандаты, ограничения, скилы, команды, подбор недостающих агентов и встройка новых компетенций.','agents','Мандат Кати'),
+              ('agent_statuses','active, thinking, waiting, idle, error, paused','agents','Статусы агентов'),
+              ('agent_stall_threshold_minutes','120','agents','Порог зависания агента, минут'),
+              ('kanban_bidirectional_links','agent->task; task->agent; agent->skills; task->skills; chat->task; task->chat; activity_log->agent; activity_log->task','kanban','Двусторонние связи'),
+              ('kanban_task_required_fields','assignedAgentId, curatorAgentId, requiredSkills, startedAt, nextStep, agentDiscussionId, agentStatusSnapshot, lastAgentActivityAt','kanban','Поля задачи для агентского слоя'),
+              ('chat_vs_log_rule','Чат — коммуникация и решения. Журнал активности — факты действий. Не смешивать чат и журнал.','kanban','Правило чат/журнал'),
+              ('telegram_delivery_target','telegram','notifications','Целевой канал Telegram'),
+              ('telegram_delivery_guard','Перед запуском новых уведомлений проверять daily-cost-report: deliver=telegram target resolved failed. Новые чаты/уведомления не считать готовыми без рабочего target mapping.','notifications','Delivery guard Telegram'),
+              ('daily_cost_report_status','known_issue_target_resolved_failed','notifications','Статус daily-cost-report'),
+              ('daily_cost_report_schedule','ежедневно, cron job daily-cost-report','cron','Daily cost report'),
+              ('daily_model_picker_schedule','ежедневно, cron job daily-model-picker','cron','Daily model picker'),
+              ('git_auto_commit_schedule','cron job git-auto-commit','cron','Git auto-commit'),
+              ('default_daily_budget_usd','2.50','budget','Старый дневной бюджет по умолчанию'),
+              ('default_monthly_budget_usd','60.00','budget','Старый месячный бюджет по умолчанию'),
+              ('cost_controller_agent','A01 cost controller','budget','Контроллер расходов'),
+              ('hermes_model_fast','google/gemini-2.0-flash-free','hermes','Быстрая модель'),
+              ('hermes_model_powerful','openrouter/owl-alpha','hermes','Сильная модель'),
+              ('hermes_features_level0','skills, memory, delegation, profiles, webhooks, MCP, kanban, cron, Telegram gateway','hermes','Доступные механики Hermes'),
+              ('hermes_cli_path','/Users/admin/.local/bin/hermes','hermes','Путь Hermes CLI'),
+              ('core_services_disk_policy','Core services/projects should run from internal disk; external /Volumes/256 mainly for capacity expansion and large storage.','system','Политика диска'),
+              ('dashboard_port','3000','system','Порт dashboard'),
+              ('postgres_container','corp-postgres','system','PostgreSQL контейнер'),
+              ('redis_container','corp-redis','system','Redis контейнер'),
+              ('no_env_without_confirmation','true','safety','Не менять .env без подтверждения'),
+              ('no_delete_data_without_confirmation','true','safety','Не удалять данные без подтверждения'),
+              ('no_schema_change_without_migration','true','safety','Схема БД только миграцией'),
+              ('no_prod_deploy_without_confirmation','true','safety','Продакшен только после подтверждения'),
+              ('no_secret_exposure','true','safety','Не показывать секреты в UI')
+            ON CONFLICT (key) DO UPDATE
+            SET group_name=EXCLUDED.group_name,
+                label=EXCLUDED.label,
+                value=COALESCE(NULLIF(settings.value,''), EXCLUDED.value),
+                updated_at=NOW()
         """)
 
 class WsManager:
@@ -153,7 +205,7 @@ async def get_project(pid: str):
         """, pid)
         total = await c.fetchval("SELECT ROUND(SUM(cost_usd)::numeric,6) FROM costs WHERE project_id=$1 AND created_at > NOW()-INTERVAL '24h'", pid)
         all_agents = await c.fetch("SELECT id, project_id, name, role, status, last_heartbeat FROM agents WHERE project_id=$1 ORDER BY id", pid)
-    log_path = Path(f"/Volumes/256/digital-corp/logs/{pid}.log")
+    log_path = LOGS_DIR / f"{pid}.log"
     logs = "\n".join(log_path.read_text().splitlines()[-40:]) if log_path.exists() else "нет логов"
     return {**dict(p), "cost_today": float(total or 0), "agents": [dict(a) for a in agents], "project_agents": [dict(a) for a in all_agents], "logs": logs}
 
@@ -214,8 +266,8 @@ async def get_knowledge():
 async def refresh_knowledge():
     subprocess.Popen([
         "python3.12",
-        "/Volumes/256/digital-corp/agents/a06-research/research_agent.py",
-    ], stdout=open("/Volumes/256/digital-corp/logs/a06.log", "a"), stderr=subprocess.STDOUT)
+        str(PROJECT_ROOT / "agents" / "a06-research" / "research_agent.py"),
+    ], stdout=open(LOGS_DIR / "a06.log", "a"), stderr=subprocess.STDOUT)
     return {"ok": True}
 
 from typing import Optional, List
@@ -252,7 +304,7 @@ def _skill_summary_from_path(path: Path):
 
 @app.get("/api/skills")
 async def list_skills():
-    roots = [Path("/Users/admin/.hermes/skills"), Path("/Volumes/256/digital-corp/skills")]
+    roots = [Path("/Users/admin/.hermes/skills"), PROJECT_ROOT / "skills"]
     out = []
     seen = set()
     for root in roots:
@@ -267,7 +319,7 @@ async def list_skills():
 @app.get("/api/skills/{skill_name}")
 async def get_skill(skill_name: str):
     safe = skill_name.replace("..", "").replace("/", "").replace("\\", "")
-    for root in [Path("/Users/admin/.hermes/skills"), Path("/Volumes/256/digital-corp/skills")]:
+    for root in [Path("/Users/admin/.hermes/skills"), PROJECT_ROOT / "skills"]:
         if not root.exists():
             continue
         for md in root.rglob("SKILL.md"):
@@ -425,13 +477,21 @@ from starlette.responses import HTMLResponse as _HTMLResponse
 @app.get("/")
 async def serve(): return _HTMLResponse(content=FRONTEND.read_text(), media_type="text/html; charset=utf-8")
 
+@app.get("/dashboard")
+async def serve_dashboard(): return _HTMLResponse(content=FRONTEND.read_text(), media_type="text/html; charset=utf-8")
+
+@app.get("/dashboard/{path:path}")
+async def serve_dashboard_path(path: str): return _HTMLResponse(content=FRONTEND.read_text(), media_type="text/html; charset=utf-8")
+
 @app.get("/agents-room")
 async def agents_room():
-    p = Path("/Volumes/256/digital-corp/dashboard/frontend/agents-room.html")
+    p = PROJECT_ROOT / "dashboard" / "frontend" / "agents-room.html"
     return _HTMLResponse(content=p.read_text(), media_type="text/html; charset=utf-8")
 
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+
+@app.get("/api/agents")
 
 @app.get("/api/agents")
 async def get_agents(project_id: str = None, type: str = None, status: str = None, skill: str = None):

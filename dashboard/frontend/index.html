@@ -78,7 +78,11 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
 .sg-row:last-child{border-bottom:none}
 .sg-label{color:#555}
 .sg-val{color:#888;font-family:'SF Mono',Monaco,monospace;font-size:12px}
-.sg-input{font-size:13px;padding:4px 8px;border:1px solid #ddd;border-radius:6px;width:160px;font-family:'SF Mono',Monaco,monospace}
+.sg-input{font-size:13px;padding:4px 8px;border:1px solid #ddd;border-radius:6px;width:220px;font-family:'SF Mono',Monaco,monospace}
+.sg-textarea{font-size:12px;padding:8px;border:1px solid #ddd;border-radius:8px;width:min(560px,60vw);min-height:92px;line-height:1.45;font-family:'SF Mono',Monaco,monospace;white-space:pre-wrap}
+.sg-desc{font-size:11px;color:#aaa;text-transform:none;letter-spacing:0;font-weight:400;margin-top:3px;line-height:1.45}
+.sg-key{display:block;font-size:10px;color:#bbb;font-family:'SF Mono',Monaco,monospace;margin-top:2px}
+.settings-note{background:#fff;border:1px solid #e8e8e8;border-radius:12px;padding:.8rem 1rem;color:#777;font-size:12px;line-height:1.55}
 .chat-sidebar{width:340px;min-width:340px;display:flex;flex-direction:column;height:100%;background:#fff;border-left:1px solid #e0e0e0}
 .chat-sidebar.closed{width:0;min-width:0;overflow:hidden}
 .chat-tabs{display:flex;align-items:center;gap:0;border-bottom:1px solid #eee;overflow-x:auto;flex-shrink:0}
@@ -422,20 +426,28 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
 
     <template x-if="view==='settings'">
       <div class="settings-wrap">
-        <template x-for="(items, group) in settings" :key="group">
-          <div class="settings-group">
-            <div class="sg-hdr" x-text="groupLabel(group)"></div>
-            <template x-for="item in items" :key="item.key">
+        <div class="settings-note">
+          <b>Настройки уровня 0</b> — восстановленный базовый контур Digital Corp/Hermes: бюджеты, расписания, правила CEO-режима, Telegram/delivery guard, канбан и генеральные агенты. Секреты здесь не показываются и .env не меняется.
+        </div>
+        <template x-for="group in settingsGroupOrder()" :key="group">
+          <div class="settings-group" x-show="settings[group] && settings[group].length">
+            <div class="sg-hdr"><span x-text="groupLabel(group)"></span><div class="sg-desc" x-text="groupDescription(group)"></div></div>
+            <template x-for="item in settings[group]" :key="item.key">
               <div class="sg-row">
-                <span class="sg-label" x-text="item.label"></span>
-                <input class="sg-input" :value="item.value"
-                       @change="updateSetting(item.key, $event.target.value)"
-                       :type="item.key.includes('secret')||item.key.includes('token')||item.key.includes('key')?'password':'text'">
+                <span class="sg-label"><span x-text="item.label || item.key"></span><span class="sg-key" x-text="item.key"></span></span>
+                <template x-if="isLongSetting(item)">
+                  <textarea class="sg-textarea" x-text="item.value" @change="updateSetting(item.key, $event.target.value)"></textarea>
+                </template>
+                <template x-if="!isLongSetting(item)">
+                  <input class="sg-input" :value="item.value"
+                         @change="updateSetting(item.key, $event.target.value)"
+                         :type="isSecretSetting(item.key)?'password':'text'">
+                </template>
               </div>
             </template>
           </div>
         </template>
-        <div style="font-size:11px;color:#ccc;padding:.5rem 0">Изменения сохраняются автоматически</div>
+        <div style="font-size:11px;color:#ccc;padding:.5rem 0">Изменения сохраняются автоматически в таблицу settings. Критичные секреты и .env — только вручную после подтверждения владельца.</div>
       </div>
     </template>
 
@@ -867,7 +879,41 @@ function app() {
     },
 
     groupLabel(g) {
-      return {budget:'Бюджеты проектов',cron:'Расписание (cron)',system:'Система',general:'Общие'}[g]||g;
+      return {
+        budget:'Бюджеты проектов', cron:'Расписание (cron)', system:'Система', general:'Общие',
+        rules:'Правила уровня 0', notifications:'Уведомления и доставка', agents:'Генеральные агенты',
+        kanban:'Канбан и задачи', hermes:'Hermes Agent', safety:'Безопасность'
+      }[g]||g;
+    },
+
+    groupDescription(g) {
+      return {
+        budget:'Старые настройки бюджетов и лимитов расходов.',
+        cron:'Плановые задачи: daily-cost-report, model picker, git auto-commit.',
+        system:'Служебные параметры dashboard/gateway без секретов.',
+        rules:'Генеральные правила CEO-режима: владелец не оператор, минимум экранного времени.',
+        notifications:'Telegram и delivery guard; учитывает известную проблему daily-cost-report target resolved failed.',
+        agents:'Политика Пепе, Антона и Кати на верхнем уровне управления.',
+        kanban:'Связи агент → задача → скилы → чат → журнал.',
+        hermes:'Модель, профили, делегирование, память, skills, MCP и webhooks.',
+        safety:'Ограничения на .env, секреты, БД, продакшен и удаление данных.'
+      }[g] || '';
+    },
+
+    settingsGroupOrder() {
+      const preferred = ['general','rules','agents','kanban','notifications','budget','cron','hermes','system','safety'];
+      return [...preferred.filter(g => this.settings[g]), ...Object.keys(this.settings).filter(g => !preferred.includes(g))];
+    },
+
+    isSecretSetting(key) {
+      const k = (key || '').toLowerCase();
+      return k.includes('secret') || k.includes('token') || k.includes('api_key') || k.endsWith('_key');
+    },
+
+    isLongSetting(item) {
+      const k = (item?.key || '').toLowerCase();
+      const v = item?.value || '';
+      return k.includes('rules') || k.includes('policy') || k.includes('mandate') || k.includes('guardrails') || k.includes('routing') || v.length > 90 || v.includes('\n');
     },
 
     connectWS() {
