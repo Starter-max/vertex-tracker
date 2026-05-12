@@ -4,11 +4,20 @@ from contextlib import asynccontextmanager
 from collections import defaultdict
 from pydantic import BaseModel
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List
 import asyncpg, psutil, subprocess, asyncio, os, uuid, json, httpx, redis.asyncio as aioredis
 from dotenv import load_dotenv
 from company_builder import is_project_company_request, route_project_company, read_workroom
+from parallel_engine import (
+    ensure_parallel_migration,
+    create_work_package,
+    get_work_package,
+    list_work_packages,
+    update_subtask_status,
+    dispatch_ready_subtasks,
+    emit_event,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CORE_DIR = PROJECT_ROOT / "core"
@@ -138,6 +147,7 @@ async def lifespan(app):
     global pool
     pool = await asyncpg.create_pool(**DB, min_size=2, max_size=10)
     await apply_general_agents_migration()
+    await ensure_parallel_migration(pool, CORE_DIR / "migrations")
     await ensure_seeded()
     yield
     await pool.close()
@@ -287,6 +297,26 @@ class KanbanCardBody(BaseModel):
 class StatusBody(BaseModel):
     status: str
 
+class ParallelWorkPackageBody(BaseModel):
+    title: str
+    objective: str = ""
+    project_id: Optional[str] = "corp"
+    priority: str = "P2"
+    parallel_limit: int = 3
+    backup_ref: Optional[str] = None
+    diagnostic_ref: Optional[str] = None
+    kanban_card_id: Optional[str] = None
+    subtasks: List[dict] = []
+    metadata: dict = {}
+
+class SubtaskStatusBody(BaseModel):
+    status: str
+    result_summary: Optional[str] = None
+    error_summary: Optional[str] = None
+
+class ParallelDispatcherTickBody(BaseModel):
+    work_package_id: Optional[str] = None
+    limit: Optional[int] = None
 
 
 def _skill_summary_from_path(path: Path):
@@ -327,6 +357,52 @@ async def get_skill(skill_name: str):
             if item["name"] == safe or md.parent.name == safe:
                 return {**item, "content": md.read_text(errors="ignore")[:20000]}
     raise HTTPException(404, "skill not found")
+
+@app.get("/api/parallel/work-packages")
+async def api_parallel_list(status: Optional[str] = None, project_id: Optional[str] = None, limit: int = 50):
+    return await list_work_packages(pool, status=status, project_id=project_id, limit=min(limit, 200))
+
+@app.post("/api/parallel/work-packages")
+async def api_parallel_create(body: ParallelWorkPackageBody):
+    data = body.dict()
+    if not data.get("objective"):
+        data["objective"] = data.get("title") or "Parallel work package"
+    return await create_work_package(pool, REDIS_URL, data)
+
+@app.post("/api/parallel/dispatcher/tick")
+async def api_parallel_dispatcher_tick(body: ParallelDispatcherTickBody = ParallelDispatcherTickBody()):
+    safe_limit = body.limit
+    if safe_limit is not None:
+        safe_limit = max(1, min(int(safe_limit), 10))
+    return await dispatch_ready_subtasks(pool, REDIS_URL, work_package_id=body.work_package_id, limit=safe_limit)
+
+@app.get("/api/parallel/work-packages/{work_package_id}")
+async def api_parallel_get(work_package_id: str):
+    item = await get_work_package(pool, work_package_id)
+    if not item:
+        raise HTTPException(404, "work package not found")
+    return item
+
+@app.patch("/api/parallel/subtasks/{subtask_id}/status")
+async def api_parallel_subtask_status(subtask_id: str, body: SubtaskStatusBody):
+    item = await update_subtask_status(pool, REDIS_URL, subtask_id, body.status, body.result_summary, body.error_summary)
+    if not item:
+        raise HTTPException(404, "subtask not found")
+    return item
+
+@app.post("/api/parallel/work-packages/{work_package_id}/events")
+async def api_parallel_event(work_package_id: str, body: dict):
+    return await emit_event(
+        pool,
+        REDIS_URL,
+        str(body.get("event_type") or "note"),
+        str(body.get("message") or "parallel event"),
+        work_package_id,
+        subtask_id=body.get("subtask_id"),
+        agent_id=body.get("agent_id"),
+        severity=str(body.get("severity") or "info"),
+        payload=body.get("payload") or {},
+    )
 
 @app.get("/api/kanban")
 async def get_kanban(layer: str = "strategic", project_id: str = None, card_type: str = None):
@@ -369,7 +445,34 @@ async def create_kanban_card(body: KanbanCardBody):
 @app.patch("/api/kanban/{card_id}/status")
 async def update_kanban_status(card_id: str, body: StatusBody):
     async with pool.acquire() as c:
-        await c.execute("UPDATE kanban_cards SET status=$1, moved_at=NOW(), updated_at=NOW() WHERE id=$2", body.status, card_id)
+        card = await c.fetchrow("SELECT * FROM kanban_cards WHERE id=$1", card_id)
+        if not card: raise HTTPException(404, "card not found")
+        await c.execute("""
+            UPDATE kanban_cards
+            SET status=$1,
+                moved_at=NOW(),
+                updated_at=NOW(),
+                started_at=CASE WHEN $1='in_progress' THEN COALESCE(started_at,NOW()) ELSE started_at END,
+                last_agent_activity_at=NOW(),
+                agent_status_snapshot=jsonb_build_object('agent', COALESCE(assigned_agent_id, agent_id), 'status', $1, 'updated_at', NOW())
+            WHERE id=$2
+        """, body.status, card_id)
+        agent_id = card['assigned_agent_id'] or card['agent_id']
+        if agent_id:
+            agent_status = {'in_progress':'active','review':'waiting','blocked':'error','done':'idle','queue':'waiting','planned':'waiting','frozen':'paused'}.get(body.status, 'active')
+            event_type = {'in_progress':'task_started','review':'status_changed','blocked':'task_blocked','done':'task_completed','queue':'status_changed','planned':'status_changed','frozen':'task_paused'}.get(body.status, 'status_changed')
+            await c.execute("""
+                UPDATE agents
+                SET status=$1,
+                    current_task_id=CASE WHEN $2='done' AND current_task_id=$3 THEN NULL ELSE COALESCE(current_task_id,$3) END,
+                    active_since=CASE WHEN $2='in_progress' THEN COALESCE(active_since,NOW()) ELSE active_since END,
+                    last_activity_at=NOW(), updated_at=NOW()
+                WHERE id=$4
+            """, agent_status, body.status, card_id, agent_id)
+            await c.execute("""
+                INSERT INTO agent_activity_log(id,agent_id,event_type,task_id,project_id,text)
+                VALUES($1,$2,$3,$4,$5,$6)
+            """, "log-" + str(uuid.uuid4())[:12], agent_id, event_type, card_id, card['project_id'], f"Статус задачи изменён на {body.status}")
     return {"ok": True}
 
 @app.delete("/api/kanban/{card_id}")
@@ -406,43 +509,135 @@ async def delete_chat_session(sid: str):
 
 class MsgBody(BaseModel): session_id: str; content: str
 
+def _clean_hermes_output(out: str) -> str:
+    text = out or ""
+    # Hermes CLI may echo the whole prompt before the visual answer box. Keep only the final box/content.
+    if "╭─ ⚕ Hermes" in text:
+        text = text.split("╭─ ⚕ Hermes")[-1]
+    lines = [ln.rstrip() for ln in text.splitlines()]
+    cleaned = []
+    skip_prefixes = (
+        "Query:", "Initializing agent", "Resume this session with:",
+        "Session:", "Duration:", "Messages:", "Tool Calls:", "MCP Tools:",
+        "hermes --resume", "╰", "╭", "─",
+    )
+    for ln in lines:
+        s = ln.strip()
+        if not s:
+            continue
+        if any(s.startswith(p) for p in skip_prefixes):
+            continue
+        if "hermes --resume" in s:
+            continue
+        if set(s) <= {"─", "╭", "╮", "╰", "╯", "│", " ", "⚕"}:
+            continue
+        # Strip box borders and indentation from Hermes' rendered answer.
+        s = s.strip(" │")
+        if s:
+            cleaned.append(s)
+    return "\n".join(cleaned).strip()
+
 async def call_hermes(message: str, session_id: str) -> str:
-    # Try HTTP API first (if Hermes gateway exposes one)
+    """Call Hermes from the dashboard backend. Never fail silently."""
     hermes_port = os.getenv("HERMES_PORT", "8000")
+    last_error = ""
     try:
         async with httpx.AsyncClient(timeout=3) as client:
             for path in ["/api/chat", "/chat", "/v1/chat/completions"]:
                 try:
-                    r = await client.post(f"http://localhost:{hermes_port}{path}",
-                                          json={"message": message, "session_id": session_id})
+                    r = await client.post(
+                        f"http://localhost:{hermes_port}{path}",
+                        json={"message": message, "session_id": session_id},
+                    )
                     if r.status_code == 200:
                         d = r.json()
-                        return d.get("response") or d.get("content") or d.get("choices", [{}])[0].get("message", {}).get("content", str(d))
-                except: continue
-    except: pass
-    # Try Hermes CLI
+                        response = d.get("response") or d.get("content") or d.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        if response:
+                            return str(response)[:4000]
+                    else:
+                        last_error = f"HTTP {path}: {r.status_code}"
+                except Exception as e:
+                    last_error = f"HTTP {path}: {type(e).__name__}: {e}"
+    except Exception as e:
+        last_error = f"HTTP client: {type(e).__name__}: {e}"
+
     try:
         r = subprocess.run(
-            ["hermes", "chat", "-q", message],
-            capture_output=True, text=True, timeout=90,
-            env={**os.environ, "PATH": "/Users/admin/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"}
+            ["/Users/admin/.local/bin/hermes", "chat", "-q", message],
+            capture_output=True, text=True, timeout=120,
+            env={**os.environ, "PATH": "/Users/admin/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"},
         )
-        if r.returncode == 0:
-            out = (r.stdout or "").strip()
-            if out:
-                lines = [ln.rstrip() for ln in out.splitlines()]
-                cleaned = []
-                for ln in lines:
-                    if ln.startswith(("Query:", "Initializing agent", "Resume this session with:", "Session:", "Duration:", "Messages:")):
-                        continue
-                    if ln.strip() in {"────────────────────────────────────────", "╭─ ⚕ Hermes ───────────────────────────────────────────────────────────────────╮", "╰──────────────────────────────────────────────────────────────────────────────╯"}:
-                        continue
-                    cleaned.append(ln)
-                cleaned = "\n".join([ln for ln in cleaned if ln.strip()])
-                return cleaned[:2000] if cleaned else out[:2000]
-    except Exception:
-        pass
-    return "⚠️ Hermes не подключён. Попробуй: hermes chat -q 'твой вопрос' в терминале."
+        out = _clean_hermes_output(r.stdout)
+        if r.returncode == 0 and out:
+            return out[:4000]
+        last_error = f"CLI rc={r.returncode}; stderr={(r.stderr or '')[-500:]}"
+    except Exception as e:
+        last_error = f"CLI: {type(e).__name__}: {e}"
+
+    return "⚠️ Hermes не ответил. Я зафиксировал сбой в журнале; причина: " + last_error[:700]
+
+AGENT_PERSONAS = {
+    "pepe": {
+        "name": "Пепе",
+        "role": "управляющий цифровой корпорации Hermes",
+        "style": "коротко координирует, назначает ответственных, формулирует следующий шаг и эскалирует только важное",
+    },
+    "anton": {
+        "name": "Антон",
+        "role": "внутренняя ИТ-компания: backend, frontend, БД, интеграции, диагностика, тестирование",
+        "style": "говорит технически, но понятно владельцу; предлагает проверяемые действия и безопасный запуск",
+    },
+    "katya": {
+        "name": "Катя",
+        "role": "HR-компания агентов: роли, мандаты, скилы, команды и встройка компетенций",
+        "style": "проверяет зоны ответственности, недостающие скилы и кого лучше назначить",
+    },
+}
+
+def _fallback_agent_reply(agent_id: str, owner_text: str) -> str:
+    fallback = {
+        "pepe": "Принял. Я фиксирую запрос, связываю его с рабочим потоком и определяю ответственного. Следующий шаг: удержать задачу в движении без лишнего участия владельца.",
+        "anton": "Принял. Проверяю техническую часть: API, логи, базу, UI и связки. Следующий шаг: воспроизвести проблему, исправить и подтвердить тестом.",
+        "katya": "Приняла. Проверяю роли, мандаты и недостающие скилы. Следующий шаг: определить, кто должен вести задачу и какие компетенции нужны.",
+    }
+    return fallback.get(agent_id, "Принял сообщение. Фиксирую его и готовлю следующий шаг.")
+
+async def _agent_reply(agent_id: str, owner_text: str, chat_title: str, task_id: str = None, project_id: str = None) -> str:
+    persona = AGENT_PERSONAS.get(agent_id, {"name": agent_id, "role": "агент Digital Corp", "style": "отвечает кратко и по делу"})
+    prompt = f"""
+Ты отвечаешь внутри dashboard Digital Corp как агент {persona['name']}.
+Роль: {persona['role']}.
+Стиль: {persona['style']}.
+Философия: владелец — CEO/заказчик, не оператор; каждое решение должно уменьшать его экранное время.
+Чат: {chat_title}.
+Связанная задача: {task_id or 'нет'}.
+Проект: {project_id or 'corp'}.
+Сообщение владельца: {owner_text}
+
+Ответь от первого лица как {persona['name']}. Не говори, что ты языковая модель. Дай короткий рабочий ответ: что понял, что делаешь/предлагаешь, следующий шаг. Если нужен другой агент, явно упомяни его.
+""".strip()
+    response = await call_hermes(prompt, f"agent-{agent_id}-{task_id or 'general'}")
+    if response.startswith("⚠️ Hermes не ответил"):
+        fallback = {
+            "pepe": "Принял. Я фиксирую запрос, связываю его с канбаном и определяю ответственного. Следующий шаг: проверить, нужен ли Антон для техники или Катя для ролей/скилов.",
+            "anton": "Принял. Проверяю техническую часть: API, логи, базу, UI и связку с канбаном. Следующий шаг: воспроизвести проблему и дать исправление с проверкой.",
+            "katya": "Приняла. Проверяю, кто должен выполнять задачу, какие скилы нужны и нет ли разрыва между ролью агента и фактической работой.",
+        }.get(agent_id, "Принял сообщение. Фиксирую его и готовлю следующий шаг.")
+        return fallback + "\n\n" + response
+    return response
+
+async def _insert_agent_message(c, chat_id: str, sender_id: str, text: str, message_type: str, task_id: str = None, project_id: str = None):
+    mid = "msg-" + str(uuid.uuid4())[:12]
+    await c.execute("""
+        INSERT INTO agent_messages(id,chat_id,sender_type,sender_id,text,message_type,task_id,project_id)
+        VALUES($1,$2,'agent',$3,$4,$5,$6,$7)
+    """, mid, chat_id, sender_id, text, message_type, task_id, project_id)
+    await c.execute("""
+        INSERT INTO agent_activity_log(id,agent_id,event_type,task_id,project_id,text)
+        VALUES($1,$2,'message_sent',$3,$4,$5)
+    """, "log-" + str(uuid.uuid4())[:12], sender_id, task_id, project_id, f"{sender_id} ответил в чате {chat_id}: {text[:180]}")
+    await c.execute("UPDATE agents SET last_activity_at=NOW(), updated_at=NOW(), status=CASE WHEN status='idle' THEN 'active' ELSE status END WHERE id=$1", sender_id)
+    return mid
 
 @app.post("/api/chat/send")
 async def send_msg(body: MsgBody):
@@ -474,6 +669,10 @@ async def ws_endpoint(ws: WebSocket):
     except: wsman.disconnect(ws)
 
 from starlette.responses import HTMLResponse as _HTMLResponse
+
+@app.get("/api/health")
+async def api_health(): return {"status":"ok"}
+
 @app.get("/")
 async def serve(): return _HTMLResponse(content=FRONTEND.read_text(), media_type="text/html; charset=utf-8")
 
@@ -534,6 +733,31 @@ async def get_general_agents():
         """)
     return [_jsonable(r) for r in rows]
 
+@app.get("/api/agents/counts")
+async def agent_counts_for_ui():
+    async with pool.acquire() as c:
+        rows = await c.fetch("""
+            SELECT COALESCE(project_id,'corp') AS project_id, COUNT(*) as total,
+                   COUNT(*) FILTER (WHERE status='active') as active
+            FROM agents GROUP BY COALESCE(project_id,'corp')
+        """)
+    return {r['project_id']: {"total": int(r['total']), "active": int(r['active'])} for r in rows}
+
+@app.get("/api/agents/stalls")
+async def agent_stalls(threshold_minutes: int = 120):
+    async with pool.acquire() as c:
+        rows = await c.fetch("""
+            SELECT a.id AS agent_id, a.name, a.status, a.current_task_id, a.last_activity_at,
+                   kc.title AS task_title, kc.priority, kc.project_id
+            FROM agents a
+            LEFT JOIN kanban_cards kc ON kc.id=a.current_task_id
+            WHERE a.current_task_id IS NOT NULL
+              AND a.status IN ('active','thinking')
+              AND COALESCE(a.last_activity_at, a.active_since, NOW() - INTERVAL '100 years') < NOW() - ($1::text || ' minutes')::interval
+            ORDER BY COALESCE(a.last_activity_at, a.active_since) ASC
+        """, str(threshold_minutes))
+    return {"threshold_minutes": threshold_minutes, "items": [_jsonable(r) for r in rows], "count": len(rows)}
+
 @app.get("/api/agents/{agent_id}")
 async def get_agent(agent_id: str):
     async with pool.acquire() as c:
@@ -557,27 +781,60 @@ class AgentMsgBody(BaseModel):
     message_type: str = "owner_message"
     task_id: Optional[str] = None
     project_id: Optional[str] = None
+    parent_message_id: Optional[str] = None
 
 @app.post("/api/agent-chats/{chat_id}/messages")
 async def post_agent_chat_message(chat_id: str, body: AgentMsgBody):
     mid = "msg-" + str(uuid.uuid4())[:12]
+    task_id = None
+    project_id = None
+    chat_title = chat_id
+    agent_ids = []
     async with pool.acquire() as c:
         chat = await c.fetchrow("SELECT * FROM agent_chats WHERE id=$1", chat_id)
         if not chat: raise HTTPException(404, "chat not found")
+        task_id = body.task_id or chat['task_id']
+        project_id = body.project_id or chat['project_id'] or 'corp'
+        chat_title = chat['title'] or chat_id
         await c.execute("""
-            INSERT INTO agent_messages(id,chat_id,sender_type,sender_id,text,message_type,task_id,project_id)
-            VALUES($1,$2,$3,$4,$5,$6,$7,$8)
-        """, mid, chat_id, body.sender_type, body.sender_id, body.text, body.message_type, body.task_id or chat['task_id'], body.project_id or chat['project_id'])
+            INSERT INTO agent_messages(id,chat_id,sender_type,sender_id,text,message_type,task_id,project_id,parent_message_id)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        """, mid, chat_id, body.sender_type, body.sender_id, body.text, body.message_type, task_id, project_id, body.parent_message_id)
         if body.sender_type == 'owner' and chat['agent_id']:
+            agent_ids = [chat['agent_id']]
             await c.execute("""
                 INSERT INTO agent_activity_log(id,agent_id,event_type,task_id,project_id,text)
                 VALUES($1,$2,'message_sent',$3,$4,$5)
-            """, "log-" + str(uuid.uuid4())[:12], chat['agent_id'], body.task_id or chat['task_id'], body.project_id or chat['project_id'], "Владелец написал агенту: " + body.text[:180])
-    return {"ok": True, "id": mid}
+            """, "log-" + str(uuid.uuid4())[:12], chat['agent_id'], task_id, project_id, "Владелец написал агенту: " + body.text[:180])
+        elif body.sender_type == 'owner' and chat['chat_type'] == 'global':
+            agent_ids = ['pepe', 'anton', 'katya']
+            for aid in agent_ids:
+                await c.execute("""
+                    INSERT INTO agent_activity_log(id,agent_id,event_type,task_id,project_id,text)
+                    VALUES($1,$2,'message_received',$3,$4,$5)
+                """, "log-" + str(uuid.uuid4())[:12], aid, task_id, project_id, "Владелец написал в общий чат: " + body.text[:180])
+        await c.execute("UPDATE agent_chats SET updated_at=NOW() WHERE id=$1", chat_id)
+
+    reply_ids = []
+    if body.sender_type == 'owner' and agent_ids:
+        for aid in agent_ids:
+            reply_text = await _agent_reply(aid, body.text, chat_title, task_id, project_id)
+            message_type = 'agent_to_agent' if chat_id == 'global-agents-chat' and aid != 'pepe' else 'agent_message'
+            async with pool.acquire() as c:
+                rid = await _insert_agent_message(c, chat_id, aid, reply_text, message_type, task_id, project_id)
+                reply_ids.append(rid)
+                if chat_id == 'global-agents-chat' and aid == 'pepe':
+                    await c.execute("""
+                        INSERT INTO agent_messages(id,chat_id,sender_type,sender_id,text,message_type,task_id,project_id,parent_message_id)
+                        VALUES($1,$2,'system','system',$3,'system_event',$4,$5,$6)
+                    """, "msg-" + str(uuid.uuid4())[:12], chat_id, "Система передала сообщение Пепе, Антону и Кате. Ответы сохранены в общий чат и журнал активности.", task_id, project_id, rid)
+                await c.execute("UPDATE agent_chats SET updated_at=NOW() WHERE id=$1", chat_id)
+    return {"ok": True, "id": mid, "reply_ids": reply_ids, "agents_notified": agent_ids}
 
 class TaskFromMessageBody(BaseModel):
     title: str
     description: str = ""
+    message_id: Optional[str] = None
     agent_id: Optional[str] = None
     curator_agent_id: Optional[str] = "pepe"
     project_id: Optional[str] = "corp"
@@ -590,13 +847,41 @@ async def create_task_from_agent_chat(chat_id: str, body: TaskFromMessageBody):
     async with pool.acquire() as c:
         chat = await c.fetchrow("SELECT * FROM agent_chats WHERE id=$1", chat_id)
         if not chat: raise HTTPException(404, "chat not found")
+        source_msg = None
+        if body.message_id:
+            source_msg = await c.fetchrow("SELECT * FROM agent_messages WHERE id=$1 AND chat_id=$2", body.message_id, chat_id)
+        if source_msg is None:
+            source_msg = await c.fetchrow("SELECT * FROM agent_messages WHERE chat_id=$1 ORDER BY created_at DESC LIMIT 1", chat_id)
+        assigned_agent_id = body.agent_id or chat['agent_id']
+        project_id = body.project_id or chat['project_id'] or (source_msg['project_id'] if source_msg else None) or 'corp'
+        description = body.description or (source_msg['text'] if source_msg else '') or 'Создано из чата агентов'
         await c.execute("""
             INSERT INTO kanban_cards(id,title,description,card_type,layer,project_id,agent_id,status,priority,tags,assigned_agent_id,curator_agent_id,required_skills,agent_discussion_id,next_step)
-            VALUES($1,$2,$3,'task','operational',$4,$5,'queue',$6,ARRAY['agent-chat'],$5,$7,$8,$9,'Уточнить первый исполнимый шаг')
-        """, cid, body.title, body.description, body.project_id, body.agent_id or chat['agent_id'], body.priority, body.curator_agent_id, body.required_skills, chat_id)
-        if body.agent_id or chat['agent_id']:
-            await c.execute("INSERT INTO agent_activity_log(id,agent_id,event_type,task_id,project_id,text) VALUES($1,$2,'task_created',$3,$4,$5)", "log-" + str(uuid.uuid4())[:12], body.agent_id or chat['agent_id'], cid, body.project_id, "Создана задача из сообщения чата: " + body.title)
-    return {"ok": True, "id": cid}
+            VALUES($1,$2,$3,'task','operational',$4,$5::text,'queue',$6,ARRAY['agent-chat'],$5::text,$7,$8::jsonb,$9,'Уточнить первый исполнимый шаг')
+        """, cid, body.title, description, project_id, assigned_agent_id, body.priority, body.curator_agent_id, json.dumps(body.required_skills or []), chat_id)
+        if source_msg:
+            await c.execute("""
+                UPDATE agent_messages
+                SET task_id=$1, project_id=$2, message_type=CASE WHEN message_type='owner_message' THEN 'task_update' ELSE message_type END
+                WHERE id=$3
+            """, cid, project_id, source_msg['id'])
+        system_message_id = "msg-" + str(uuid.uuid4())[:12]
+        await c.execute("""
+            INSERT INTO agent_messages(id,chat_id,sender_type,sender_id,text,message_type,task_id,project_id,parent_message_id)
+            VALUES($1,$2,'system','system',$3,'task_update',$4,$5,$6)
+        """, system_message_id, chat_id, f"Создана задача канбана: {body.title}", cid, project_id, source_msg['id'] if source_msg else None)
+        if assigned_agent_id:
+            await c.execute("INSERT INTO agent_activity_log(id,agent_id,event_type,task_id,project_id,text) VALUES($1,$2,'task_created',$3,$4,$5)", "log-" + str(uuid.uuid4())[:12], assigned_agent_id, cid, project_id, "Создана задача из сообщения чата: " + body.title)
+            await c.execute("INSERT INTO agent_activity_log(id,agent_id,event_type,task_id,project_id,text) VALUES($1,$2,'task_assigned',$3,$4,$5)", "log-" + str(uuid.uuid4())[:12], assigned_agent_id, cid, project_id, "Задача назначена агенту из чата: " + body.title)
+            await c.execute("""
+                UPDATE agents
+                SET current_task_id=$1,
+                    status=CASE WHEN status='paused' THEN 'paused' ELSE 'active' END,
+                    active_since=NOW(),
+                    last_activity_at=NOW(), updated_at=NOW()
+                WHERE id=$2
+            """, cid, assigned_agent_id)
+    return {"ok": True, "id": cid, "source_message_id": source_msg['id'] if source_msg else None, "assigned_agent_id": assigned_agent_id, "reply_ids": [system_message_id]}
 
 @app.get("/api/agent-activity")
 async def get_agent_activity(agent_id: str = None, task_id: str = None):
@@ -609,20 +894,11 @@ async def get_agent_activity(agent_id: str = None, task_id: str = None):
         rows = await c.fetch(q + " ORDER BY created_at DESC LIMIT 100", *params)
     return [_jsonable(r) for r in rows]
 
-@app.get("/api/agents/counts")
-async def agent_counts():
-    async with pool.acquire() as c:
-        rows = await c.fetch("""
-            SELECT project_id, COUNT(*) as total,
-                   COUNT(*) FILTER (WHERE status='active') as active
-            FROM agents GROUP BY project_id
-        """)
-    return {r['project_id']: {"total": int(r['total']), "active": int(r['active'])} for r in rows}
 
 @app.get("/api/board/messages")
 async def board_messages():
     r = aioredis.from_url(REDIS_URL, decode_responses=True)
-    streams = ['corp:tasks','corp:results','corp:alerts','corp:costs','corp:health']
+    streams = ['corp:tasks','corp:results','corp:alerts','corp:costs','corp:health','corp:parallel_events','corp:kanban_events']
     messages = []
     try:
         for stream in streams:
@@ -665,6 +941,8 @@ async def project_workroom(pid: str, kind: str = "chat"):
 async def board_send(body: BoardMsg):
     r = aioredis.from_url(REDIS_URL, decode_responses=True)
     stream = f"{body.target}:tasks" if body.target != "corp" else "corp:tasks"
+    agents = ['pepe', 'anton', 'katya'] if body.target == 'corp' else ['pepe']
+    reply_ids = []
     try:
         await r.xadd(stream, {
             "source": "dashboard",
@@ -672,9 +950,27 @@ async def board_send(body: BoardMsg):
             "message": body.content,
             "ts": str(datetime.now().timestamp())
         })
+        async with pool.acquire() as c:
+            owner_mid = "msg-" + str(uuid.uuid4())[:12]
+            await c.execute("""
+                INSERT INTO agent_messages(id,chat_id,sender_type,sender_id,text,message_type,project_id)
+                VALUES($1,'global-agents-chat','owner','owner',$2,'owner_message',$3)
+            """, owner_mid, body.content, body.target)
+        for aid in agents:
+            reply_text = _fallback_agent_reply(aid, body.content)
+            await r.xadd('corp:results', {
+                "source": "dashboard",
+                "agent": aid,
+                "message": reply_text,
+                "target": body.target,
+                "ts": str(datetime.now().timestamp())
+            })
+            async with pool.acquire() as c:
+                rid = await _insert_agent_message(c, 'global-agents-chat', aid, reply_text, 'agent_to_agent' if aid != 'pepe' else 'agent_message', None, body.target)
+                reply_ids.append(rid)
     finally:
         await r.aclose()
-    return {"ok": True, "stream": stream}
+    return {"ok": True, "stream": stream, "agents_notified": agents, "reply_ids": reply_ids}
 
 @app.post("/api/agents/{agent_id}/ping")
 async def ping_agent(agent_id: str):

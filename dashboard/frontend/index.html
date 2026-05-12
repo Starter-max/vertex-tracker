@@ -503,10 +503,18 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
       <div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem"><div style="font-size:16px;font-weight:700" x-text="agentChatTitle"></div><button class="btn" @click="loadAgentChatMessages(currentAgentChatId)">↻ обновить</button></div>
         <div class="chat-card">
-          <template x-for="m in agentChatMessages" :key="m.id"><div class="chat-line" :class="m.sender_type"><b x-text="m.sender_id"></b>: <span x-text="m.text"></span><div style="font-size:10px;color:#bbb" x-text="(m.message_type||'message')+' · '+fmtTime(m.created_at)+' · '+(m.task_id||'')"></div></div></template>
+          <template x-for="m in agentChatMessages" :key="m.id"><div class="chat-line" :class="m.sender_type"><b x-text="m.sender_id"></b>: <span x-text="m.text"></span><div style="font-size:10px;color:#bbb" x-text="(m.message_type||'message')+' · '+fmtTime(m.created_at)+' · '+(m.task_id||'')"></div><div class="ga-actions" style="margin-top:5px"><button class="btn" style="font-size:10px;padding:2px 7px" @click="createTaskFromAgentChat(m)">+ задача из сообщения</button><button class="btn" style="font-size:10px;padding:2px 7px" x-show="m.task_id" @click="openKanbanTask(m.task_id)">открыть задачу</button></div></div></template>
           <template x-if="agentChatMessages.length===0"><div class="chat-empty">Чат пока пуст</div></template>
         </div>
-        <div class="chat-card"><textarea class="chat-textarea" style="width:100%;max-height:160px" x-model="agentChatInput" placeholder="Сообщение агенту или в общий чат..." rows="3"></textarea><div class="ga-actions"><button class="btn primary" @click="sendAgentChatMessage()" :disabled="!agentChatInput.trim()">Отправить</button><button class="btn" @click="createTaskFromAgentChat()">Создать задачу из сообщения</button><button class="btn" @click="openAgentChatPage()">В общий чат</button></div></div>
+        <div class="chat-card">
+          <textarea class="chat-textarea" style="width:100%;max-height:160px" x-model="agentChatInput" placeholder="Сообщение агенту или в общий чат..." rows="3"></textarea>
+          <div class="kb-toolbar" style="margin:.5rem 0 0">
+            <input class="kb-filter" style="min-width:240px" x-model="agentChatTaskTitle" placeholder="Название задачи из чата">
+            <select class="kb-filter" x-model="agentChatTaskAgent"><option value="">авто-агент</option><option value="pepe">Пепе</option><option value="anton">Антон</option><option value="katya">Катя</option></select>
+            <select class="kb-filter" x-model="agentChatTaskPriority"><option>P0</option><option>P1</option><option>P2</option><option>P3</option></select>
+          </div>
+          <div class="ga-actions"><button class="btn primary" @click="sendAgentChatMessage()" :disabled="!agentChatInput.trim()">Отправить</button><button class="btn" @click="createTaskFromAgentChat()">Создать задачу</button><button class="btn" @click="openAgentChatPage()">В общий чат</button></div>
+        </div>
       </div>
     </template>
 
@@ -691,7 +699,7 @@ function app() {
     chatOpen: false, chatSessions: [], activeChatId: null,
     chatMessages: {}, chatInput: '', chatLoading: false,
     agentCounts: {}, workroomKind: 'chat', workroomContent: '',
-    boardMessages: [], boardInput: '', boardTarget: 'corp', boardLoading: false, agentFilterStatus:'all', agentFilterSkill:'', currentAgentChatId:'global-agents-chat', agentChatTitle:'Общий чат агентов', agentChatMessages:[], agentChatInput:'',
+    boardMessages: [], boardInput: '', boardTarget: 'corp', boardLoading: false, agentFilterStatus:'all', agentFilterSkill:'', currentAgentChatId:'global-agents-chat', agentChatTitle:'Общий чат агентов', agentChatMessages:[], agentChatInput:'', agentChatTaskTitle:'', agentChatTaskAgent:'', agentChatTaskPriority:'P2',
     knowledge: {items: [], summary: {}}, knowledgeFilter: 'all',
     kanbanCards: [], kanbanLayer: 'strategic', kanbanFilter: 'all', kanbanProjectFilter: 'all', kanbanModal: null, draggedCardId: null, newCard: {title:'',description:'',card_type:'task',layer:'strategic',project_id:null,priority:'P2'},
     sections: [
@@ -1051,7 +1059,22 @@ function app() {
     async openAgentDirectChat(id) { this.currentAgentChatId='chat-agent-'+id; this.agentChatTitle='Личный чат: '+id; this.view='agentChat'; await this.loadAgentChatMessages(this.currentAgentChatId); },
     async loadAgentChatMessages(chatId) { this.agentChatMessages = await fetch('/api/agent-chats/'+encodeURIComponent(chatId)+'/messages').then(r=>r.json()).catch(()=>[]); },
     async sendAgentChatMessage() { if(!this.agentChatInput.trim()) return; await fetch('/api/agent-chats/'+encodeURIComponent(this.currentAgentChatId)+'/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:this.agentChatInput})}); this.agentChatInput=''; await this.loadAgentChatMessages(this.currentAgentChatId); },
-    async createTaskFromAgentChat() { const title=this.agentChatInput.trim() || prompt('Название задачи'); if(!title) return; await fetch('/api/agent-chats/'+encodeURIComponent(this.currentAgentChatId)+'/create-task',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,description:'Создано из чата агентов'})}); await this.loadAgentChatMessages(this.currentAgentChatId); await this.loadKanban(); },
+    async createTaskFromAgentChat(message=null) {
+      const title = (this.agentChatTaskTitle || '').trim() || (message?.text ? message.text.slice(0,90) : '') || this.agentChatInput.trim() || prompt('Название задачи');
+      if(!title) return;
+      const payload = {
+        title,
+        description: message?.text || this.agentChatInput || 'Создано из чата агентов',
+        message_id: message?.id || null,
+        agent_id: this.agentChatTaskAgent || null,
+        priority: this.agentChatTaskPriority || 'P2',
+        project_id: message?.project_id || 'corp'
+      };
+      const res = await fetch('/api/agent-chats/'+encodeURIComponent(this.currentAgentChatId)+'/create-task',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(r=>r.json());
+      this.agentChatTaskTitle='';
+      await this.loadAgentChatMessages(this.currentAgentChatId); await this.loadKanban(); await this.loadGeneralAgents();
+      if(res?.id) await this.openKanbanTask(res.id);
+    },
     async openKanbanTask(id) { if(!id) return; this.view='kanban'; await this.loadKanban(); const card=this.kanbanCards.find(c=>c.id===id); if(card) this.kanbanModal=card; },
     fmtTime(iso) {
       if(!iso) return '';
