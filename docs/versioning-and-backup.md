@@ -6,7 +6,8 @@
 ## Текущий статус
 - Режим: TEMPORARY_BACKUP_MODE.
 - Backup root: /Volumes/256/digital-corp-backups.
-- Маркер: /Volumes/256/.digital-corp-backup-marker.
+- Root marker: /Volumes/256/.digital-corp-backup-marker.
+- Launchd-readable marker: /Volumes/256/digital-corp-backups/DIGITAL_CORP_BACKUP_MARKER.txt.
 - Скрипт: /Users/admin/.hermes/scripts/backup-digital-corp.sh.
 - Конфиг: /Users/admin/.hermes/backup-config.env.
 - Лог: /Users/admin/.hermes/logs/backup.log.

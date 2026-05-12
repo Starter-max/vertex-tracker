@@ -26,6 +26,13 @@ DIGITAL_CORP_BACKUP_DISK=PRIMARY_BACKUP
 MODE=DEDICATED_BACKUP_DISK_MODE
 CREATED_FOR=Digital Corp Hermes Backup
 EOF
+mkdir -p /Volumes/DigitalCorpBackup/backups
+cat > /Volumes/DigitalCorpBackup/backups/DIGITAL_CORP_BACKUP_MARKER.txt <<'EOF'
+DIGITAL_CORP_BACKUP_DISK=PRIMARY_BACKUP
+MODE=DEDICATED_BACKUP_DISK_MODE
+CREATED_FOR=Digital Corp Hermes Backup
+NOTE=Launchd-readable marker copy
+EOF
 ```
 
 3. Создать папку:
@@ -45,7 +52,7 @@ rsync -avh /Volumes/256/digital-corp-backups/ /Volumes/DigitalCorpBackup/backups
 ```bash
 BACKUP_MODE=DEDICATED_BACKUP_DISK_MODE
 BACKUP_ROOT=/Volumes/DigitalCorpBackup/backups
-BACKUP_MARKER=/Volumes/DigitalCorpBackup/.digital-corp-backup-marker
+BACKUP_MARKER=/Volumes/DigitalCorpBackup/backups/DIGITAL_CORP_BACKUP_MARKER.txt
 EXPECTED_MARKER_VALUE=DIGITAL_CORP_BACKUP_DISK=PRIMARY_BACKUP
 ```
 
