@@ -39,6 +39,20 @@ launchctl kickstart -k gui/$(id -u)/com.digitalcorp.backup
 
 ## Проверка PASS
 
+После выдачи доступа запустить одну команду:
+
+```bash
+~/.hermes/scripts/verify-launchd-backup-pass.sh
+```
+
+Версионированная копия скрипта:
+
+```text
+ops/backup/verify-launchd-backup-pass.sh
+```
+
+Ручная эквивалентная проверка:
+
 ```bash
 plutil -lint ~/Library/LaunchAgents/com.digitalcorp.backup.plist
 launchctl list | grep com.digitalcorp.backup
