@@ -7,9 +7,16 @@ from pathlib import Path
 from datetime import datetime
 import asyncpg, psutil, subprocess, asyncio, os, uuid, httpx, redis.asyncio as aioredis
 from dotenv import load_dotenv
+from company_builder import is_project_company_request, route_project_company, read_workroom
 
-load_dotenv("/Volumes/256/digital-corp/core/.env")
-DB = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@localhost:5432/{os.getenv('POSTGRES_DB')}"
+load_dotenv("/Volumes/256/digital-corp/core/.env", override=True)
+DB = {
+    "user": os.getenv('POSTGRES_USER'),
+    "password": os.getenv('POSTGRES_PASSWORD'),
+    "database": os.getenv('POSTGRES_DB'),
+    "host": "localhost",
+    "port": 5432,
+}
 FRONTEND = Path("/Volumes/256/digital-corp/dashboard/frontend/index.html")
 UPLOADS = Path("/Volumes/256/digital-corp/dashboard/uploads")
 UPLOADS.mkdir(exist_ok=True)
@@ -54,7 +61,7 @@ wsman = WsManager()
 @asynccontextmanager
 async def lifespan(app):
     global pool
-    pool = await asyncpg.create_pool(DB, min_size=2, max_size=10)
+    pool = await asyncpg.create_pool(**DB, min_size=2, max_size=10)
     await ensure_seeded()
     yield
     await pool.close()
@@ -313,7 +320,11 @@ async def call_hermes(message: str, session_id: str) -> str:
 async def send_msg(body: MsgBody):
     async with pool.acquire() as c:
         await c.execute("INSERT INTO chat_messages(session_id,role,content) VALUES($1,'user',$2)", body.session_id, body.content)
-    response = await call_hermes(body.content, body.session_id)
+    if is_project_company_request(body.content):
+        routed = await route_project_company(pool, REDIS_URL, body.content, source='dashboard_chat')
+        response = routed.get('response', str(routed))
+    else:
+        response = await call_hermes(body.content, body.session_id)
     async with pool.acquire() as c:
         await c.execute("INSERT INTO chat_messages(session_id,role,content) VALUES($1,'assistant',$2)", body.session_id, response)
     await wsman.broadcast({"type":"chat","session_id":body.session_id,"role":"assistant","content":response})
@@ -338,7 +349,7 @@ from starlette.responses import HTMLResponse as _HTMLResponse
 @app.get("/")
 async def serve(): return _HTMLResponse(content=FRONTEND.read_text(), media_type="text/html; charset=utf-8")
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 @app.get("/api/agents")
 async def get_agents(project_id: str = None):
@@ -384,6 +395,22 @@ async def board_messages():
 class BoardMsg(BaseModel):
     content: str
     target: str = "corp"
+
+class InboxRouteBody(BaseModel):
+    message: str
+    source: str = "dashboard"
+    owner_id: str = "owner"
+
+@app.post("/api/inbox/route")
+async def inbox_route(body: InboxRouteBody):
+    if is_project_company_request(body.message):
+        return await route_project_company(pool, REDIS_URL, body.message, source=body.source)
+    return {"ok": False, "intent_class": "UNKNOWN", "status": "not_handled", "response": "Master Router не распознал запрос как PROJECT_COMPANY_REQUEST."}
+
+@app.get("/api/project-companies/{pid}/workroom")
+async def project_workroom(pid: str, kind: str = "chat"):
+    content = read_workroom(pid, kind) or ""
+    return {"project_id": pid.lower(), "kind": kind, "content": content}
 
 @app.post("/api/board/send")
 async def board_send(body: BoardMsg):

@@ -1,0 +1,10 @@
+{
+  "project_id": "P_TEST",
+  "name": "Test Agent Company",
+  "type": "software_product",
+  "status": "PLANNING",
+  "owner": "CEO",
+  "created_at": "2026-05-12T07:31:39.766976+03:00",
+  "source_text": "Создай компанию под разработку тестового проекта P_TEST",
+  "path": "/Volumes/256/digital-corp/projects/p_test-test-agent-company"
+}

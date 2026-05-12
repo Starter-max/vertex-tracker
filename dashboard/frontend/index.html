@@ -66,6 +66,10 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
 .tbl-row{display:flex;align-items:center;justify-content:space-between;padding:.55rem .9rem;border-bottom:1px solid #f0f0f0;font-size:13px}
 .tbl-row:last-child{border-bottom:none}
 .logbox{background:#f8f8f8;border-radius:8px;padding:.75rem;font-size:11px;font-family:'SF Mono',Monaco,monospace;color:#555;line-height:1.7;max-height:150px;overflow-y:auto;white-space:pre-wrap;margin-bottom:1.25rem}
+.workroom-box{background:#0f172a;color:#dbeafe;border-radius:10px;padding:.85rem;font-size:11px;font-family:'SF Mono',Monaco,monospace;line-height:1.55;max-height:260px;overflow-y:auto;white-space:pre-wrap;margin-bottom:1rem;border:1px solid #1e3a8a}
+.workroom-tabs{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
+.workroom-tab{font-size:11px;padding:4px 10px;border-radius:999px;border:1px solid #ddd;background:#fff;color:#777;cursor:pointer}
+.workroom-tab.active{background:#1a1a1a;color:#fff;border-color:#1a1a1a}
 .settings-wrap{display:grid;gap:1rem}
 .settings-group{background:#fff;border-radius:12px;border:1px solid #e8e8e8;overflow:hidden}
 .sg-hdr{padding:.75rem 1rem;background:#f9f9f9;border-bottom:1px solid #eee;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#888}
@@ -347,6 +351,14 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
             <div class="tbl-row" style="color:#ccc">у проекта пока нет агентов</div>
           </template>
         </div>
+        <div class="lbl" style="margin-bottom:8px;font-size:12px;font-weight:700;color:#aaa;text-transform:uppercase">Agent Workroom</div>
+        <div class="workroom-tabs">
+          <button class="workroom-tab" :class="{active:workroomKind==='chat'}" @click="loadWorkroom(detail.id,'chat')">чат</button>
+          <button class="workroom-tab" :class="{active:workroomKind==='decisions'}" @click="loadWorkroom(detail.id,'decisions')">решения</button>
+          <button class="workroom-tab" :class="{active:workroomKind==='debates'}" @click="loadWorkroom(detail.id,'debates')">споры</button>
+          <button class="workroom-tab" :class="{active:workroomKind==='summaries'}" @click="loadWorkroom(detail.id,'summaries')">итоги</button>
+        </div>
+        <div class="workroom-box" x-text="workroomContent || 'workroom пока пуст или не создан'"></div>
         <div class="lbl" style="margin-bottom:8px;font-size:12px;font-weight:700;color:#aaa;text-transform:uppercase">последние логи</div>
         <div class="logbox" x-text="detail.logs||'нет логов'"></div>
         <div class="actions">
@@ -535,12 +547,14 @@ function app() {
     settings: {},
     chatOpen: false, chatSessions: [], activeChatId: null,
     chatMessages: {}, chatInput: '', chatLoading: false,
-    agentCounts: {},
+    agentCounts: {}, workroomKind: 'chat', workroomContent: '',
     boardMessages: [], boardInput: '', boardTarget: 'corp', boardLoading: false,
     knowledge: {items: [], summary: {}}, knowledgeFilter: 'all',
     kanbanCards: [], kanbanLayer: 'strategic', kanbanFilter: 'all', kanbanProjectFilter: 'all', kanbanModal: null, draggedCardId: null, newCard: {title:'',description:'',card_type:'task',layer:'strategic',project_id:null,priority:'P2'},
     sections: [
       {type:'business', label:'Бизнес', icon:'💼'},
+      {type:'software_product', label:'Продукты', icon:'🧩'},
+      {type:'internal_tool', label:'Внутренние инструменты', icon:'🛠'},
       {type:'personal', label:'Личные', icon:'👤'},
       {type:'admin', label:'Администрация', icon:'⚙️'},
       {type:'external', label:'Сторонние', icon:'🤝'}
@@ -585,6 +599,17 @@ function app() {
     async loadDetail(id) {
       const d = await fetch('/api/projects/'+id).then(r=>r.json());
       this.detail = d; this.view = 'dashboard';
+      await this.loadWorkroom(id, this.workroomKind || 'chat');
+    },
+
+    async loadWorkroom(id, kind='chat') {
+      this.workroomKind = kind;
+      try {
+        const r = await fetch('/api/project-companies/'+id+'/workroom?kind='+encodeURIComponent(kind)).then(x=>x.json());
+        this.workroomContent = r.content || '';
+      } catch(e) {
+        this.workroomContent = 'ошибка загрузки workroom';
+      }
     },
 
     async pauseProj(id) {
