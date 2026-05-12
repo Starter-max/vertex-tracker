@@ -95,3 +95,16 @@ CREATE INDEX IF NOT EXISTS idx_work_packages_project ON work_packages(project_id
 CREATE INDEX IF NOT EXISTS idx_subtasks_package_status ON subtasks(work_package_id, status);
 CREATE INDEX IF NOT EXISTS idx_parallel_events_package ON parallel_events(work_package_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_kanban_cards_work_package ON kanban_cards(work_package_id);
+
+-- Seed safe virtual worker identity used by dispatcher/worker observability.
+INSERT INTO projects(id,name,type,status,budget_daily,budget_monthly)
+VALUES ('corp','Digital Corp','internal','active',2.50,60.00)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO agents(id,project_id,name,role,status)
+VALUES ('parallel-engine','corp','Parallel Engine','system_worker','configured')
+ON CONFLICT (id) DO UPDATE SET
+    project_id=COALESCE(agents.project_id, EXCLUDED.project_id),
+    name=EXCLUDED.name,
+    role=EXCLUDED.role,
+    status=COALESCE(NULLIF(agents.status,''), EXCLUDED.status);

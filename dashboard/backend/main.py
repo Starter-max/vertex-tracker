@@ -16,6 +16,7 @@ from parallel_engine import (
     list_work_packages,
     update_subtask_status,
     dispatch_ready_subtasks,
+    execute_running_subtasks,
     emit_event,
 )
 
@@ -46,6 +47,7 @@ def _jsonable(row):
     d = dict(row)
     json_fields = {
         'mandate', 'restrictions', 'skills', 'metadata', 'required_skills',
+        'matched_skills', 'missing_skills',
         'agent_status_snapshot', 'decision_options', 'tags'
     }
     for k, v in list(d.items()):
@@ -318,6 +320,12 @@ class ParallelDispatcherTickBody(BaseModel):
     work_package_id: Optional[str] = None
     limit: Optional[int] = None
 
+class ParallelWorkerTickBody(BaseModel):
+    work_package_id: Optional[str] = None
+    max_items: int = 1
+    allow_cli: bool = False
+    timeout_seconds: int = 120
+
 
 def _skill_summary_from_path(path: Path):
     text = path.read_text(errors="ignore")
@@ -376,6 +384,19 @@ async def api_parallel_dispatcher_tick(body: ParallelDispatcherTickBody = Parall
         safe_limit = max(1, min(int(safe_limit), 10))
     return await dispatch_ready_subtasks(pool, REDIS_URL, work_package_id=body.work_package_id, limit=safe_limit)
 
+@app.post("/api/parallel/worker/tick")
+async def api_parallel_worker_tick(body: ParallelWorkerTickBody = ParallelWorkerTickBody()):
+    safe_max_items = max(1, min(int(body.max_items or 1), 5))
+    safe_timeout = max(15, min(int(body.timeout_seconds or 120), 600))
+    return await execute_running_subtasks(
+        pool,
+        REDIS_URL,
+        work_package_id=body.work_package_id,
+        max_items=safe_max_items,
+        allow_cli=bool(body.allow_cli),
+        timeout_seconds=safe_timeout,
+    )
+
 @app.get("/api/parallel/work-packages/{work_package_id}")
 async def api_parallel_get(work_package_id: str):
     item = await get_work_package(pool, work_package_id)
@@ -406,16 +427,43 @@ async def api_parallel_event(work_package_id: str, body: dict):
 
 @app.get("/api/kanban")
 async def get_kanban(layer: str = "strategic", project_id: str = None, card_type: str = None):
+    """Kanban cards enriched with agent and skill links for the CEO dashboard."""
     async with pool.acquire() as c:
-        q = "SELECT * FROM kanban_cards WHERE layer=$1"
+        q = """
+            SELECT
+                kc.*,
+                COALESCE(kc.assigned_agent_id, kc.agent_id) AS effective_assigned_agent_id,
+                a.name AS assigned_agent_name,
+                a.status AS assigned_agent_status,
+                a.last_activity_at AS assigned_agent_last_activity_at,
+                ca.name AS curator_agent_name,
+                COALESCE(skill_calc.matched_skills, '[]'::jsonb) AS matched_skills,
+                COALESCE(skill_calc.missing_skills, '[]'::jsonb) AS missing_skills
+            FROM kanban_cards kc
+            LEFT JOIN agents a ON a.id = COALESCE(kc.assigned_agent_id, kc.agent_id)
+            LEFT JOIN agents ca ON ca.id = kc.curator_agent_id
+            LEFT JOIN LATERAL (
+                WITH required AS (
+                    SELECT jsonb_array_elements_text(COALESCE(kc.required_skills, '[]'::jsonb)) AS skill_id
+                ), agent_skill_rows AS (
+                    SELECT jsonb_array_elements_text(COALESCE(a.skills, '[]'::jsonb)) AS skill_id
+                )
+                SELECT
+                    COALESCE(jsonb_agg(required.skill_id) FILTER (WHERE agent_skill_rows.skill_id IS NOT NULL), '[]'::jsonb) AS matched_skills,
+                    COALESCE(jsonb_agg(required.skill_id) FILTER (WHERE agent_skill_rows.skill_id IS NULL), '[]'::jsonb) AS missing_skills
+                FROM required
+                LEFT JOIN agent_skill_rows USING (skill_id)
+            ) skill_calc ON TRUE
+            WHERE kc.layer=$1
+        """
         params = [layer]
         if project_id:
-            q += f" AND project_id=${len(params)+1}"
+            q += f" AND kc.project_id=${len(params)+1}"
             params.append(project_id)
         if card_type:
-            q += f" AND card_type=${len(params)+1}"
+            q += f" AND kc.card_type=${len(params)+1}"
             params.append(card_type)
-        rows = await c.fetch(q + " ORDER BY priority, moved_at ASC", *params)
+        rows = await c.fetch(q + " ORDER BY kc.priority, kc.moved_at ASC", *params)
     cards = []
     now = datetime.now().astimezone()
     for r in rows:

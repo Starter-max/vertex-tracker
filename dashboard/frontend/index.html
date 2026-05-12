@@ -129,7 +129,7 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
 .board-time{color:#bbb;font-size:10px;float:right}
 .board-content{color:#333;margin-top:2px;font-family:'SF Mono',Monaco,monospace;font-size:11px;word-break:break-all}
 .target-select{font-size:12px;padding:5px 8px;border:1px solid #ddd;border-radius:6px;background:#fff;color:#555;margin-bottom:6px;width:100%}
-.link{color:#3498db;cursor:pointer;text-decoration:none}.link:hover{text-decoration:underline}.skill-chip{font-size:11px;padding:2px 7px;border:1px solid #d8ecff;background:#eef6ff;color:#2475aa;border-radius:999px;cursor:pointer;margin-right:4px;display:inline-block;margin-top:4px}.skill-detail{background:#fff;border:1px solid #e8e8e8;border-radius:12px;padding:1rem;white-space:pre-wrap;font-family:'SF Mono',Monaco,monospace;font-size:12px;line-height:1.55;max-height:70vh;overflow:auto}
+.link{color:#3498db;cursor:pointer;text-decoration:none}.link:hover{text-decoration:underline}.skill-chip{font-size:11px;padding:2px 7px;border:1px solid #d8ecff;background:#eef6ff;color:#2475aa;border-radius:999px;cursor:pointer;margin-right:4px;display:inline-block;margin-top:4px}.skill-chip.matched{border-color:#d7f3df;background:#eafaf1;color:#23834b}.skill-chip.missing{border-color:#ffd9b8;background:#fff4ec;color:#c76a13}.skill-detail{background:#fff;border:1px solid #e8e8e8;border-radius:12px;padding:1rem;white-space:pre-wrap;font-family:'SF Mono',Monaco,monospace;font-size:12px;line-height:1.55;max-height:70vh;overflow:auto}
 .section-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 14px}
 .stab{font-size:12px;padding:5px 12px;border:1px solid #ddd;border-radius:999px;background:#fff;color:#777;cursor:pointer}
 .stab.active{background:#1a1a1a;color:#fff;border-color:#1a1a1a}
@@ -456,10 +456,18 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;gap:8px;flex-wrap:wrap">
           <div style="font-size:16px;font-weight:700">🤖 Агенты корпорации</div>
           <div class="kb-toolbar" style="margin:0">
-            <select class="kb-filter" x-model="agentFilterStatus"><option value="all">Все статусы</option><option value="active">active</option><option value="thinking">thinking</option><option value="waiting">waiting</option><option value="idle">idle</option></select>
+            <select class="kb-filter" x-model="agentFilterStatus"><option value="all">Все статусы</option><option value="active">active</option><option value="thinking">thinking</option><option value="waiting">waiting</option><option value="idle">idle</option><option value="error">error</option><option value="paused">paused</option></select>
+            <select class="kb-filter" x-model="agentFilterType"><option value="all">Все типы</option><option value="general_agent">general_agent</option><option value="general_agent_company">general_agent_company</option></select>
+            <select class="kb-filter" x-model="agentFilterProject"><option value="all">Все проекты</option><template x-for="p in projects" :key="p.id"><option :value="p.id" x-text="p.id.toUpperCase()"></option></template><option value="corp">corp</option></select>
             <input class="kb-filter" x-model="agentFilterSkill" placeholder="Фильтр по скилу">
-            <button class="btn" @click="loadAgents();loadSkills()">↻ обновить</button>
+            <button class="btn" @click="loadAgents();loadSkills();loadStalls()">↻ обновить</button>
           </div>
+        </div>
+        <div class="chat-card" x-show="(agentStalls.items||[]).length" style="background:#fff5f5;border-color:#fcc">
+          <div style="font-weight:700;font-size:12px;color:#c0392b">🐸 Пепе видит зависания: <span x-text="agentStalls.count"></span></div>
+          <template x-for="s in agentStalls.items||[]" :key="s.id">
+            <div class="ga-line"><span class="link" @click="openAgent(s.id)" x-text="s.name||s.id"></span> · <span x-text="s.current_task_title||s.current_task_id||'без задачи'"></span> · нет активности <span x-text="s.inactive_for||s.inactive_minutes+' мин'"></span></div>
+          </template>
         </div>
         <div class="tbl">
           <div class="tbl-row" style="background:#f9f9f9;font-weight:700;text-transform:uppercase;font-size:11px;color:#aaa">
@@ -569,15 +577,18 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
                       <span x-text="card.card_type"></span>
                       <span class="kb-time" :class="timeClass(card.time_in_stage_hrs)" x-text="card.time_in_stage"></span>
                     </div>
-                    <div class="ga-line" x-show="card.assigned_agent_id || card.curator_agent_id">
-                      <span class="link" @click.stop="openAgent(card.assigned_agent_id)" x-text="card.assigned_agent_id ? '👤 '+card.assigned_agent_id : ''"></span>
-                      <span x-show="card.curator_agent_id"> · куратор: </span><span class="link" @click.stop="openAgent(card.curator_agent_id)" x-text="card.curator_agent_id||''"></span>
+                    <div class="ga-line" x-show="card.effective_assigned_agent_id || card.curator_agent_id">
+                      <span class="link" @click.stop="openAgent(card.effective_assigned_agent_id)" x-text="card.effective_assigned_agent_id ? '👤 '+(card.assigned_agent_name||card.effective_assigned_agent_id) : ''"></span>
+                      <span x-show="card.assigned_agent_status" class="badge" :class="agentStatusClass(card.assigned_agent_status)" x-text="agentStatusLabel(card.assigned_agent_status)"></span>
+                      <span x-show="card.curator_agent_id"> · куратор: </span><span class="link" @click.stop="openAgent(card.curator_agent_id)" x-text="card.curator_agent_name||card.curator_agent_id||''"></span>
                     </div>
                     <div x-show="(card.required_skills||[]).length">
-                      <template x-for="sk in card.required_skills||[]" :key="sk"><span class="skill-chip" @click.stop="openSkill(sk)" x-text="sk"></span></template>
+                      <template x-for="sk in card.required_skills||[]" :key="sk"><span class="skill-chip" :class="(card.missing_skills||[]).includes(sk)?'missing':'matched'" @click.stop="openSkill(sk)" x-text="((card.missing_skills||[]).includes(sk)?'⚠ ':'✓ ')+sk"></span></template>
                     </div>
+                    <div class="ga-line" x-show="card.agent_discussion_id"><span class="link" @click.stop="openTaskDiscussion(card)">💬 обсуждение задачи</span></div>
                     <div class="ga-line" x-show="card.next_step"><b>Следующее:</b> <span x-text="card.next_step"></span></div>
                     <div class="ga-line" x-show="card.requires_owner_action || card.blocked_reason" style="color:#e67e22" x-text="card.requires_owner_action ? '⚠ нужен ответ владельца' : '⛔ '+card.blocked_reason"></div>
+                    <div class="ga-line" x-show="(card.missing_skills||[]).length" style="color:#e67e22" x-text="'Катя: не хватает скилов · '+(card.missing_skills||[]).join(', ')"></div>
                   </div>
                 </template>
                 <div style="font-size:11px;color:#bbb;text-align:center;padding:10px 0" x-show="cardsForColumn(col.id).length===0">Пусто</div>
@@ -591,11 +602,14 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
               <h3 x-text="kanbanModal.title"></h3>
               <div style="font-size:12px;color:#666;line-height:1.6" x-text="kanbanModal.description||'—'"></div>
               <div class="chat-card" style="background:#fafafa">
-                <div class="ga-line"><b>Исполнитель:</b> <span class="link" @click="openAgent(kanbanModal.assigned_agent_id)" x-text="kanbanModal.assigned_agent_id||kanbanModal.agent_id||'—'"></span></div>
-                <div class="ga-line"><b>Куратор:</b> <span class="link" @click="openAgent(kanbanModal.curator_agent_id)" x-text="kanbanModal.curator_agent_id||'—'"></span></div>
+                <div class="ga-line"><b>Исполнитель:</b> <span class="link" @click="openAgent(kanbanModal.effective_assigned_agent_id)" x-text="kanbanModal.assigned_agent_name||kanbanModal.effective_assigned_agent_id||'—'"></span> <span class="badge" :class="agentStatusClass(kanbanModal.assigned_agent_status)" x-text="agentStatusLabel(kanbanModal.assigned_agent_status)"></span></div>
+                <div class="ga-line"><b>Куратор:</b> <span class="link" @click="openAgent(kanbanModal.curator_agent_id)" x-text="kanbanModal.curator_agent_name||kanbanModal.curator_agent_id||'—'"></span></div>
                 <div class="ga-line"><b>Следующий шаг:</b> <span x-text="kanbanModal.next_step||'—'"></span></div>
-                <div class="ga-line"><b>Обсуждение:</b> <span class="link" @click="currentAgentChatId=kanbanModal.agent_discussion_id;agentChatTitle='Обсуждение задачи: '+kanbanModal.id;view='agentChat';loadAgentChatMessages(currentAgentChatId)" x-text="kanbanModal.agent_discussion_id||'—'"></span></div>
-                <div style="margin-top:6px"><template x-for="sk in kanbanModal.required_skills||[]" :key="sk"><span class="skill-chip" @click="openSkill(sk)" x-text="sk"></span></template></div>
+                <div class="ga-line"><b>Обсуждение:</b> <span class="link" @click="openTaskDiscussion(kanbanModal)" x-text="kanbanModal.agent_discussion_id||'—'"></span></div>
+                <div class="ga-line"><b>Ответ владельца:</b> <span x-text="kanbanModal.requires_owner_action ? 'нужен' : 'не нужен'"></span></div>
+                <div class="ga-line" x-show="kanbanModal.blocked_reason"><b>Блокировка:</b> <span x-text="kanbanModal.blocked_reason"></span></div>
+                <div style="margin-top:6px"><template x-for="sk in kanbanModal.required_skills||[]" :key="sk"><span class="skill-chip" :class="(kanbanModal.missing_skills||[]).includes(sk)?'missing':'matched'" @click="openSkill(sk)" x-text="((kanbanModal.missing_skills||[]).includes(sk)?'⚠ ':'✓ ')+sk"></span></template></div>
+                <div class="ga-line" x-show="(kanbanModal.missing_skills||[]).length" style="color:#e67e22"><b>Нехватка скилов:</b> <span x-text="(kanbanModal.missing_skills||[]).join(', ')"></span><div class="ga-actions"><button class="btn" @click="openAgentDirectChat('katya')">Катя: подобрать агента</button><button class="btn" @click="openAgentDirectChat('anton')">Антон: доработать скил</button></div></div>
               </div>
               <div class="kb-status-btns">
                 <template x-for="col in kanbanColumns()" :key="col.id">
@@ -699,7 +713,7 @@ function app() {
     chatOpen: false, chatSessions: [], activeChatId: null,
     chatMessages: {}, chatInput: '', chatLoading: false,
     agentCounts: {}, workroomKind: 'chat', workroomContent: '',
-    boardMessages: [], boardInput: '', boardTarget: 'corp', boardLoading: false, agentFilterStatus:'all', agentFilterSkill:'', currentAgentChatId:'global-agents-chat', agentChatTitle:'Общий чат агентов', agentChatMessages:[], agentChatInput:'', agentChatTaskTitle:'', agentChatTaskAgent:'', agentChatTaskPriority:'P2',
+    boardMessages: [], boardInput: '', boardTarget: 'corp', boardLoading: false, agentFilterStatus:'all', agentFilterType:'all', agentFilterProject:'all', agentFilterSkill:'', agentStalls:{items:[],count:0}, currentAgentChatId:'global-agents-chat', agentChatTitle:'Общий чат агентов', agentChatMessages:[], agentChatInput:'', agentChatTaskTitle:'', agentChatTaskAgent:'', agentChatTaskPriority:'P2',
     knowledge: {items: [], summary: {}}, knowledgeFilter: 'all',
     kanbanCards: [], kanbanLayer: 'strategic', kanbanFilter: 'all', kanbanProjectFilter: 'all', kanbanModal: null, draggedCardId: null, newCard: {title:'',description:'',card_type:'task',layer:'strategic',project_id:null,priority:'P2'},
     sections: [
@@ -720,6 +734,7 @@ function app() {
       await this.loadAgentCounts();
       await this.loadBoardMessages();
       await this.loadGeneralAgents();
+      await this.loadStalls();
     },
 
     async load() {
@@ -829,7 +844,11 @@ function app() {
     },
 
     async loadAgents() {
-      this.agents = await fetch('/api/agents').then(r=>r.json());
+      this.agents = await fetch('/api/agents').then(r=>r.json()).catch(()=>[]);
+    },
+
+    async loadStalls() {
+      this.agentStalls = await fetch('/api/agents/stalls').then(r=>r.json()).catch(()=>({items:[],count:0}));
     },
 
     async loadSkills() {
@@ -1047,7 +1066,9 @@ function app() {
     filteredAgents() {
       let a = this.agents || [];
       if(this.agentFilterStatus !== 'all') a = a.filter(x => x.status === this.agentFilterStatus);
-      if(this.agentFilterSkill.trim()) a = a.filter(x => (x.skills||[]).includes(this.agentFilterSkill.trim()));
+      if(this.agentFilterType !== 'all') a = a.filter(x => x.type === this.agentFilterType);
+      if(this.agentFilterProject !== 'all') a = a.filter(x => (x.current_task_project_id===this.agentFilterProject) || (x.current_project_id===this.agentFilterProject) || (x.project_id===this.agentFilterProject) || (this.agentFilterProject==='corp' && !x.current_task_project_id && !x.current_project_id && !x.project_id));
+      if(this.agentFilterSkill.trim()) a = a.filter(x => (x.skills||[]).some(sk => sk.toLowerCase().includes(this.agentFilterSkill.trim().toLowerCase())));
       return a;
     },
     agentIcon(id) { return {pepe:'🐸',anton:'🛠',katya:'👥'}[id] || '🤖'; },
@@ -1056,6 +1077,7 @@ function app() {
     workDuration(a) { const iso=a?.active_since||a?.current_task_started_at; if(!iso) return '—'; const mins=Math.floor((new Date()-new Date(iso))/60000); if(mins<60) return mins+' мин'; return Math.floor(mins/60)+' ч '+(mins%60)+' мин'; },
     async openAgent(id) { this.selectedAgent = await fetch('/api/agents/'+encodeURIComponent(id)).then(r=>r.json()); this.view='agentDetail'; },
     openAgentChatPage() { this.currentAgentChatId='global-agents-chat'; this.agentChatTitle='Общий чат агентов'; this.view='agentChat'; this.loadAgentChatMessages(this.currentAgentChatId); },
+    openTaskDiscussion(card) { if(!card || !card.agent_discussion_id) return; this.currentAgentChatId=card.agent_discussion_id; this.agentChatTitle='Обсуждение задачи: '+(card.title||card.id); this.view='agentChat'; this.loadAgentChatMessages(this.currentAgentChatId); },
     async openAgentDirectChat(id) { this.currentAgentChatId='chat-agent-'+id; this.agentChatTitle='Личный чат: '+id; this.view='agentChat'; await this.loadAgentChatMessages(this.currentAgentChatId); },
     async loadAgentChatMessages(chatId) { this.agentChatMessages = await fetch('/api/agent-chats/'+encodeURIComponent(chatId)+'/messages').then(r=>r.json()).catch(()=>[]); },
     async sendAgentChatMessage() { if(!this.agentChatInput.trim()) return; await fetch('/api/agent-chats/'+encodeURIComponent(this.currentAgentChatId)+'/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:this.agentChatInput})}); this.agentChatInput=''; await this.loadAgentChatMessages(this.currentAgentChatId); },
