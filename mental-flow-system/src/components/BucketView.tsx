@@ -23,18 +23,18 @@ export function BucketView({ state }: { state: AppState }) {
 
   return <div className="space-y-6">
     <section className={`rounded-3xl border ${bucketStyles.emerald} p-4`}>
-      <div className="mb-3 flex items-center justify-between"><h2 className="text-xl font-medium">Активная работа (после Q2: изнутри)</h2><p className="text-sm text-slate-400">Здоровье / Семья / Бизнес</p></div>
+      <div className="mb-3 flex items-center justify-between"><h2 className="text-xl font-medium">Активная работа</h2><p className="text-sm text-slate-400">Здоровье / Семья / Бизнес</p></div>
       <div className="grid gap-4 md:grid-cols-3">{activeBuckets.map((b) => <Bucket key={b.title} title={b.title} color={b.color} items={b.items} onDone={(id: string)=>setState(updateThought(state,id,{done:true,category:'ARCHIVE'}))} onMove={(id: string,cat: Category)=>setState(moveThought(state,id,cat))} onNote={(id: string, note: string)=>setState(updateThought(state, id, { note }))} />)}</div>
     </section>
 
     <section className={`rounded-3xl border ${bucketStyles.amber} p-4`}>
-      <div className="mb-3 flex items-center justify-between"><h2 className="text-xl font-medium">Парковка (Q1: сжатие/срочность)</h2><button className="rounded-xl border border-amber-700 px-3 py-2 text-sm" onClick={weekly}>Недельный обзор</button></div>
+      <div className="mb-3 flex items-center justify-between"><h2 className="text-xl font-medium">Парковка</h2><button className="rounded-xl border border-amber-700 px-3 py-2 text-sm" onClick={weekly}>Недельный обзор</button></div>
       <Bucket title="" color="amber" items={parking} onDone={(id: string)=>setState(moveThought(state,id,'ARCHIVE'))} onMove={(id: string,cat: Category)=>setState(moveThought(state,id,cat))} onNote={(id: string, note: string)=>setState(updateThought(state, id, { note }))} />
     </section>
 
     <section className={`rounded-3xl border ${bucketStyles.slate} p-4`}>
       <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="text-xl font-medium">Архив (Q2: снаружи)</h2>
+        <h2 className="text-xl font-medium">Архив</h2>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <input className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm" value={archiveQuery} onChange={e => setArchiveQuery(e.target.value)} placeholder="Поиск в архиве" />
           <button className="rounded-xl border border-slate-700 px-3 py-2 text-sm" onClick={cleanArchive}>Очистка старше 30 дней</button>

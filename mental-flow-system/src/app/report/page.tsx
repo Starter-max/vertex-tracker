@@ -30,13 +30,8 @@ export default function ReportPage() {
         <div>
           <p className="text-sm text-slate-400">Mental Flow System</p>
           <h1 className="text-3xl font-semibold">Визуальный отчёт</h1>
-          <p className="mt-2 text-sm text-slate-500">Показывает, как 2 вопроса превращают поток мыслей в понятные корзины действий.</p>
+          <p className="mt-2 text-sm text-slate-500">Быстро показывает, куда утекает ментальный поток и что сейчас требует внимания.</p>
         </div>
-
-        <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-4">
-          <h2 className="text-xl font-medium">Путь методологии</h2>
-          <p className="mt-2 text-sm text-slate-300">Q1: сжатие/срочность → Парковка. Q2: изнутри/снаружи → Активная работа или Архив.</p>
-        </section>
 
         <section className="grid gap-4 md:grid-cols-4">
           <Metric label="Inbox" value={inbox} hint="ожидает разбора" />

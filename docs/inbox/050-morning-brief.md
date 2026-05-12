@@ -1,30 +1,33 @@
-# 050-morning-brief
+# Morning Brief
 
-## Что это
-Ежедневный краткий бриф владельцу в Telegram в 09:05 (локальная TZ).
+## Goal
 
-## Источники
-- system-status
-- costs/cost-reporter
-- kanban_cards
-- agents/projects
-- Redis: corp:alerts, corp:approvals
+Short 09:05 owner briefing in Telegram with system state, spend, blockers, and decisions needed.
 
-## Формат
-5-7 пунктов максимум: система, расходы, активные проекты/агенты, внимание, в работе, блокировано, нужно решение.
+## Required format
 
-## Проверка доставки
-- Исторический баг: `deliver=telegram` без явного target мог давать `target resolved failed`.
-- Исправление: использовать явный target `telegram:Kevin (dm)`.
-- Тестовый job: `telegram-delivery-test-inbox` (job_id=f079df80078c), форс-запуск выполнен.
+Keep it short: 5–7 bullets max. No logs unless asked.
 
-## Cron
-- Ежедневный job создан: `morning-brief-inbox-0905`
-- Schedule: `5 9 * * *`
-- Deliver: `telegram:Kevin (dm)`
+## Data sources
 
-## Ручной запуск
-- /д, /день (через router)
+- `/api/system`
+- `/api/costs/today`
+- `kanban_cards`
+- `inbox_events` with `requires_approval=true`
+- Redis `corp:alerts`
 
-## Отключение
-- pause/remove cron job через `hermes cron` или cronjob tool.
+## Current state
+
+Manual backend data sources work. Cron/Telegram delivery still must be verified before claiming daily brief is live.
+
+## Safe manual check
+
+```bash
+curl http://localhost:3000/api/system
+curl http://localhost:3000/api/costs/today
+curl http://localhost:3000/api/approvals/pending
+```
+
+## Disable/repair
+
+Use Hermes cron list/update/remove, but do not edit secrets or `.env`.

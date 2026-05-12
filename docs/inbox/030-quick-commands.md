@@ -1,31 +1,26 @@
-# 030-quick-commands
+# Quick Commands
 
-## Список команд (MVP)
-- /д, /день -> morning brief сейчас
-- /с, /статус -> system-status
-- /б, /бюджет -> cost-reporter
-- /к, /канбан -> in_progress + blocked
-- /г, /гит -> git status + log -5
-- /з, /знания -> knowledge_items status != ok
-- /п <текст> -> добавить задачу в kanban
-- /инбокс -> последние 10 inbox_events
-- /алерты -> последние критичные алерты
-- /долги -> зависшие задачи
-- /стоп -> безопасная остановка текущей операции
-- /риск <текст> -> быстрая оценка риска
+## Target commands
 
-## Где зарегистрированы
-- Telegram команды формируются gateway автоматически из slash registry Hermes.
-- Для кастомного поведения используется master-router intent mapping.
+- `/д`, `/день` -> run morning brief now
+- `/с`, `/статус` -> system status
+- `/б`, `/бюджет` -> costs/budget
+- `/к`, `/канбан` -> in progress + blocked kanban
+- `/г`, `/гит` -> git status/log
+- `/з`, `/знания` -> stale knowledge
+- `/п [text]` -> create planned kanban task
+- `/инбокс` -> recent inbox events
+- `/алерты` -> recent alerts
+- `/долги` -> stale tasks
+- `/стоп` -> cancel/stop safe current operation
+- `/риск [text]` -> risk estimate
 
-## Как добавить новую
-1) Добавить intent в master-router.
-2) Добавить обработчик (safe action / approval).
-3) Добавить запись в docs + тест сценария.
+## Current state
 
-## Как тестировать
-- Отправлять команды в Telegram владельца.
-- Проверять:
-  - ответ пользователю
-  - запись в inbox_events
-  - запись в Redis stream (corp:inbox/audit при необходимости)
+Backend primitives exist for inbox logging and kanban. Full Telegram command routing still needs gateway/Hermes skill wiring and end-to-end Telegram tests.
+
+## How to test backend primitive
+
+```bash
+curl -X POST http://localhost:3000/api/inbox/events   -H 'Content-Type: application/json'   -d '{"raw_text":"/к","source":"telegram","intent_class":"KANBAN_VIEW"}'
+```

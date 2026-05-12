@@ -1,15 +1,9 @@
-# 120-next-steps
+# Next Steps
 
-1) Завершить связку master-router с Telegram входом на runtime уровне.
-2) Добавить backend endpoints для inbox:
-   - GET /api/inbox/events
-   - GET /api/inbox/approvals
-   - POST /api/inbox/approvals/{id}/decision
-3) Добавить Inbox блок в dashboard UI:
-   - последние 10 сообщений
-   - pending approvals
-   - critical alerts
-4) Доделать full e2e тест сценариев 1..20 из ТЗ через Telegram.
-5) Зафиксировать cron morning brief 09:05 только после стабильного delivery теста.
-6) Вынести master-router/kanban-aggregator в исполняемый модуль (Python service) с параметризованными SQL.
-7) Добавить unit/integration tests для классификатора intent и approval transitions.
+1. Wire Hermes Telegram gateway messages to `POST /api/inbox/events`.
+2. Implement master-router skill as the default owner-message classifier.
+3. Add dashboard Inbox widget using `/api/inbox/events/recent` and `/api/approvals/pending`.
+4. Verify Telegram cron delivery and enable 09:05 morning brief only after proof.
+5. Add A0x worker consumers for `corp:tasks` and emit `agent_events` updates.
+6. Add automated tests for inbox API, Redis side effects, and approval storage.
+7. Remove or guard destructive dashboard endpoints behind explicit approval.

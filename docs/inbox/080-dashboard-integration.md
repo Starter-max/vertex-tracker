@@ -1,33 +1,32 @@
-# 080-dashboard-integration
+# Dashboard Integration
 
-## Фактическое состояние
-- Dashboard backend работает на localhost:3000
-- Проверенные endpoints:
-  - /api/system
-  - /api/projects
-  - /api/costs/today
-  - /api/kanban
-  - /api/knowledge
-  - /api/agents
+## Current dashboard
 
-## Что уже есть в UI
-- Обзор системы
-- Проекты и расходы
-- Знания
-- Канбан
-- Чат/board сообщения
+Root: `http://localhost:3000/`
+Backend: launchd service `com.digitalcorp.dashboard-backend`
+Frontend files: `dashboard/frontend/`
+Backend file: `dashboard/backend/main.py`
 
-## MVP интеграция inbox
-Сделано на backend/data уровне:
-- Таблица inbox_events
-- Redis streams corp:inbox/corp:audit
+## Added/available APIs
 
-## Что добавить следующим шагом в UI
-- Блок Inbox (последние 10)
-- Блок approvals (pending)
-- Блок alerts (последние critical)
+- `/api/system`
+- `/api/projects`
+- `/api/costs/today`
+- `/api/agents/activity`
+- `/api/agent-events/recent`
+- `/api/inbox/events/recent`
+- `/api/approvals/pending`
 
-## Как проверить
-- curl localhost:3000/api/system
-- psql select из inbox_events
-- redis xrevrange corp:inbox
+## UI state
+
+Agent tab exists. Full Inbox block is not yet built in the main UI; backend APIs are ready for it.
+
+## Next dashboard addition
+
+Add a compact Inbox widget:
+- last 10 inbox events
+- pending approvals
+- recent alerts
+- today costs
+
+Do this only as a small UI patch; do not break existing dashboard.

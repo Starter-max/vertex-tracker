@@ -1,31 +1,31 @@
-# 040-redis-event-bus
+# Redis Event Bus
 
 ## Streams
-- corp:inbox
-- corp:tasks
-- corp:results
-- corp:alerts
-- corp:costs
-- corp:health
-- corp:audit
-- corp:approvals
 
-## Формат task event
-- task_id, source, source_message_id, owner_id, project_id
-- agent, intent, message, priority, risk_level
-- requires_approval, created_at, deadline, correlation_id
+- `corp:inbox` — owner input events
+- `corp:tasks` — tasks delegated to agents
+- `corp:results` — agent results
+- `corp:alerts` — alerts
+- `corp:costs` — cost events
+- `corp:health` — agent health
+- `corp:audit` — important/risky actions
+- `corp:approvals` — pending approvals
 
-## Формат result event
-- result_id, task_id, agent, status, summary, details_path, cost_usd, created_at
+## Current integration
 
-## Формат audit event
-- audit_id, actor, action, target, risk_level, before_summary, after_summary, created_at
+`POST /api/inbox/events` writes `corp:inbox`.
+If approval is required, it writes `corp:approvals`.
+If risk is medium/high/critical, it writes `corp:audit`.
 
-## Примеры redis-cli
-- XADD corp:inbox * source telegram owner_id 89434175 message "статус"
-- XREVRANGE corp:inbox + - COUNT 10
-- XINFO STREAM corp:tasks
+`POST /api/board/send` writes `corp:tasks` and persists into `agent_events`.
 
-## Отладка
-- Если stream не существует: это нормально до первого XADD.
-- Проверять контейнер: docker exec corp-redis redis-cli ...
+## Debug
+
+```bash
+docker exec corp-redis redis-cli XLEN corp:inbox
+docker exec corp-redis redis-cli XREVRANGE corp:inbox + - COUNT 5
+```
+
+## Repair
+
+If streams are missing, create them by first `XADD`; absence before first event is not an error.

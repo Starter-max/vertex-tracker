@@ -1,46 +1,45 @@
-# 020-kanban-aggregator
+# Kanban Aggregator
 
-## Что это
-Безопасный слой работы с kanban_cards для inbox-router.
+## Purpose
 
-## Где лежит
-- Skill: /Users/admin/.hermes/skills/digital-corp/kanban-aggregator/SKILL.md
-- Таблица: public.kanban_cards
+Safe layer around `kanban_cards` so owner can add/view/move work without manually editing SQL.
 
-## Операции
-1. Показать in_progress
-2. Показать blocked/frozen
-3. Показать strategic layer
-4. Добавить задачу (status=planned, priority=P2 default)
-5. Переместить задачу (SELECT кандидатов -> UPDATE 1)
-6. Поставить приоритет P0/P1/P2/P3
-7. Найти зависшие
+## Existing API
 
-## SQL (безопасные шаблоны)
-- View in_progress:
-  SELECT * FROM kanban_cards WHERE status='in_progress' ORDER BY priority, moved_at;
-- View blocked/frozen:
-  SELECT * FROM kanban_cards WHERE status IN ('blocked','frozen') ORDER BY moved_at;
-- Create:
-  INSERT INTO kanban_cards (id,title,description,card_type,layer,project_id,status,priority)
-  VALUES ($1,$2,$3,$4,$5,$6,$7,$8);
-- Candidate select before move:
-  SELECT id,title,status FROM kanban_cards WHERE lower(title) LIKE lower($1) ORDER BY moved_at DESC;
-- Move one:
-  UPDATE kanban_cards SET status=$1, moved_at=NOW(), updated_at=NOW() WHERE id=$2;
+- `GET /api/kanban?layer=strategic`
+- `POST /api/kanban`
+- `PATCH /api/kanban/{card_id}/status`
 
-## Правила безопасности
-- Никаких массовых UPDATE/DELETE.
-- При >1 кандидате обязательно уточнение.
-- DELETE задач только через approval flow.
+## Safety rules
 
-## Приоритеты
-- "срочно" => P0
-- "важно" => P1
-- default => P2
-- "потом" => P3
+- View operations are safe.
+- Create operations default to `status=planned`, `priority=P2`.
+- Move operations must target one card by id.
+- If natural-language search finds multiple candidates, ask owner to choose.
+- Do not call DELETE without explicit confirmation.
 
-## Зависшие
-- in_progress > 3 дней
-- blocked/frozen > 7 дней
-- planned и due_date < today
+## Useful SQL
+
+In progress:
+
+```sql
+SELECT id,title,project_id,status,priority,moved_at
+FROM kanban_cards
+WHERE status='in_progress'
+ORDER BY priority,moved_at;
+```
+
+Blocked/frozen:
+
+```sql
+SELECT id,title,project_id,status,priority,moved_at
+FROM kanban_cards
+WHERE status IN ('blocked','frozen')
+ORDER BY priority,moved_at;
+```
+
+## Test
+
+```bash
+curl http://localhost:3000/api/kanban?layer=strategic
+```

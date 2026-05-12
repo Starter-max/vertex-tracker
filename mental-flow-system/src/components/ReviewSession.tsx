@@ -82,7 +82,7 @@ export function ReviewSession({ thoughts, index, onAdvance }: { thoughts: Though
       <button className="rounded-2xl border border-emerald-800 px-4 py-3 text-emerald-300" onClick={toggleDone}>
         {current.done ? 'Вернуть в разбор' : 'Готово / В архив'}
       </button>
-      <button className="rounded-2xl border border-slate-700 px-4 py-3 text-slate-300" onClick={markParking}>Обход Q2: сразу в Парковку</button>
+      <button className="rounded-2xl border border-slate-700 px-4 py-3 text-slate-300" onClick={markParking}>Быстро в парковку</button>
     </div>
   );
 }

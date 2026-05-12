@@ -1,16 +1,8 @@
-# 110-known-limitations
+# Known Limitations
 
-1) Cron delivery по `deliver=telegram` без явного target ранее давал ошибку `no delivery target resolved`.
-   - Обход: использовать конкретный target (например telegram DM) при критичных задачах.
-
-2) В репозитории есть параллельные незакоммиченные изменения mental-flow-system.
-   - Риск смешивания коммитов.
-   - Мера: selective commit только inbox-файлов.
-
-3) Dashboard backend файл содержит участки, требующие рефакторинга/санитарной проверки.
-   - Сейчас не ломаем, работаем через подтверждённые API.
-
-4) Потоки Redis corp:results/corp:alerts/corp:health могут отсутствовать до первого XADD.
-   - Это нормальное состояние.
-
-5) Approval flow пока частично инфраструктурный (БД+доки+события), UI-часть в dashboard inbox-блоке отложена.
+- Telegram quick commands are specified but not fully proven end-to-end in this pass.
+- Cron Telegram delivery must be verified before daily morning brief can be considered live.
+- Real A0x worker processes are not fully implemented; Redis stream provides integration point.
+- Dashboard Inbox widget is backend-ready but not fully implemented in UI.
+- Existing destructive kanban DELETE endpoint exists and must stay outside normal owner flow.
+- Some system metrics still reference `/Volumes/256`; inbox runtime uses internal disk.

@@ -1,34 +1,60 @@
-# 010-inbox-event-log
+# Inbox Event Log
 
-## Что это
-Журнал входящих задач владельца для master-router: фиксирует исходный текст, классификацию, риск, ход выполнения, подтверждения и итог.
+## What it is
 
-## Где лежит
-- SQL миграция: /Volumes/256/digital-corp/core/migrations/006_inbox_events.sql
-- Таблица: public.inbox_events
+Durable journal for owner messages, classification, risk level, approvals, skills/agents used, and final result.
 
-## Поля (ключевые)
-- raw_text, normalized_intent, intent_class
-- project_id, priority, risk_level
-- status (received/classified/routed/waiting_approval/in_progress/completed/failed/cancelled)
-- requires_approval, approval_id
-- agents_used, skills_used
-- cost_usd, result_summary, error_summary
-- created_at/updated_at/completed_at
+## Files
 
-## Как использовать
-- На входе: писать событие со status=received.
-- После классификации: status=classified/routed.
-- На рискованных шагах: status=waiting_approval + approval_id.
-- По завершению: status=completed или failed.
+Migration: `core/migrations/007_inbox_events.sql`
+Backend: `dashboard/backend/main.py`
 
-## Как смотреть последние задачи
-SELECT id, created_at, intent_class, status, risk_level, left(raw_text,120) AS text
-FROM inbox_events
-ORDER BY id DESC
-LIMIT 20;
+## Table
 
-## Как откатывать ошибочные действия
-1) Не удалять записи из журнала.
-2) Добавить новую запись с action/result_summary об откате.
-3) Для карточек/данных делать компенсационное действие (например, вернуть статус карточки назад).
+`inbox_events` fields include:
+- `event_id`
+- `source`
+- `source_message_id`
+- `owner_id`
+- `raw_text`
+- `normalized_intent`
+- `intent_class`
+- `project_id`
+- `priority`
+- `risk_level`
+- `status`
+- `requires_approval`
+- `approval_id`
+- `agents_used`
+- `skills_used`
+- `cost_usd`
+- `result_summary`
+- `error_summary`
+- timestamps
+
+## API
+
+Create event:
+
+```bash
+curl -X POST http://localhost:3000/api/inbox/events   -H 'Content-Type: application/json'   -d '{"raw_text":"/с","source":"telegram","intent_class":"SYSTEM_STATUS"}'
+```
+
+Recent events:
+
+```bash
+curl http://localhost:3000/api/inbox/events/recent
+```
+
+## Redis side effect
+
+Every created inbox event writes to `corp:inbox`.
+If `requires_approval=true`, it also writes to `corp:approvals`.
+If risk is medium/high/critical, it writes to `corp:audit`.
+
+## Repair
+
+If API fails, check:
+- launchd backend log: `logs/dashboard-backend.err.log`
+- migration applied: `docker exec corp-postgres psql -U corp -d digitalcorp -c '\d inbox_events'`
+- Redis: `docker exec corp-redis redis-cli XLEN corp:inbox`

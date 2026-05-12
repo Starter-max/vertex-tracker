@@ -1,25 +1,31 @@
-# 070-delegation-layer
+# Delegation Layer
 
-## Роли
-- A01 Cost Controller: расходы/аномалии
-- A02 Security Monitor: ключи/доступы/уязвимости
-- A03 Risk Manager: риски/последствия
-- A04 Dispatcher: маршрутизация/уведомления
-- A05 Quality Auditor: проверка результата
-- A06 Research: актуальность знаний/ресерч
-- A07 Dev Assistant: код/тесты/рефакторинг
-- A08 Dashboard: UI/API dashboard
+## Roles
 
-## Механика
-- Если доступен delegate_task: использовать штатно.
-- Иначе: публиковать задачи в Redis `corp:tasks`.
+- A01 Cost Controller — costs and anomalies
+- A02 Security Monitor — secrets/access/security
+- A03 Risk Manager — risk review
+- A04 Dispatcher / Hermes — routing and Telegram
+- A05 Quality Auditor — result audit
+- A06 Research — fresh external knowledge
+- A07 Dev Assistant — code/tests/refactor
+- A08 Dashboard — UI/API/dashboard
+
+## Current transport
+
+- Hermes `delegate_task` exists in the agent environment.
+- Backend can enqueue tasks via `POST /api/board/send` into Redis `corp:tasks` and `agent_events`.
+
+## Rule
+
+Use direct safe action for simple queries. Use delegation or Redis tasks for complex, risky, or multi-agent work.
 
 ## Consilium mode
-Включать для сложных/рискованных/архитектурных задач.
-Формат результата:
-- Решение
-- Риски
-- Стоимость
-- Что делаем сейчас
-- Что откладываем
-- Нужно ли подтверждение владельца
+
+Use when there is high risk or architecture uncertainty. Return:
+- Decision
+- Risks
+- Cost
+- Do now
+- Defer
+- Confirmation needed: yes/no

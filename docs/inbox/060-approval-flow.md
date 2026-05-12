@@ -1,28 +1,40 @@
-# 060-approval-flow
+# Approval Flow
 
-## Когда спрашивать подтверждение
-- DELETE данных
-- изменение .env/ключей
-- массовые UPDATE
-- миграции БД
-- внешний доступ/деплой
-- расход > $2
-- существенные действия при неясном проекте
+## When to ask owner
 
-## Формат вопроса
-Нужно подтверждение.
-Хочу: <действие>.
-Риск: <коротко>.
-Цена: <$ или н/д>.
-Откат: <есть/нет>.
-A — да, делай
-B — нет, отмени
-C — безопасный вариант
+Ask before:
+- deleting data
+- changing `.env` or keys
+- mass UPDATE/DELETE
+- DB migration application
+- external access/deploy
+- spend over $2
+- unclear project with substantial consequences
 
-## Хранилище ожиданий
-- inbox_events (requires_approval=true, approval_id)
-- Redis corp:approvals для событий и таймаутов
+## Storage
 
-## Истечение и отмена
-- pending approval истекает по TTL (рекомендация: 24ч)
-- по истечению: status=cancelled, audit запись в corp:audit
+MVP stores pending approvals as `inbox_events` rows with:
+- `requires_approval=true`
+- `approval_id=appr_*`
+- `status=waiting_approval` or `received`
+
+The event is also written to Redis `corp:approvals`.
+
+## API
+
+Pending approvals:
+
+```bash
+curl http://localhost:3000/api/approvals/pending
+```
+
+## Owner question template
+
+Need confirmation.
+Want: [action]
+Risk: [short]
+Cost: [$ if any]
+Rollback: [yes/no]
+A — yes, do it
+B — no, cancel
+C — safer variant

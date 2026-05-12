@@ -31,10 +31,7 @@ export default function ReviewPage() {
     <main className="min-h-screen bg-slate-950 px-4 pb-24 pt-6 text-slate-100">
       <div className="mx-auto max-w-3xl">
         <h1 className="text-3xl font-semibold">Ежедневный разбор</h1>
-        <p className="mt-2 text-slate-400">Одна мысль за раз. Сначала Q1, потом Q2, затем раскладка по корзинам.</p>
-        <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-3 text-sm text-slate-300">
-          Q1: есть сжатие/срочность → Парковка. Q2: изнутри/снаружи → Активные корзины или Архив.
-        </div>
+        <p className="mt-2 text-slate-400">Одна мысль за раз. Два вопроса. Один быстрый итог.</p>
         <div className="mt-6 rounded-3xl border border-slate-800 bg-slate-900/70 p-4">
           <div className="mb-4 flex items-center justify-between text-sm text-slate-400"><span>Осталось: {inbox.length}</span><span>{inbox.length ? `${Math.min(index + 1, inbox.length)}/${inbox.length}` : '0/0'}</span></div>
           <div className="h-2 rounded-full bg-slate-800"><div className="h-2 rounded-full bg-emerald-500" style={{ width: `${progress}%` }} /></div>
