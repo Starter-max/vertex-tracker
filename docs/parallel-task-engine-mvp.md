@@ -109,12 +109,23 @@ Bounded worker dry-run smoke:
 
 ## Следующий шаг
 
-Перейти от dry_run к bounded Hermes CLI execution в controlled mode:
-1. добавить worker metrics: executed/skipped/failed/duration/timeouts per tick;
-2. добавить guardrails для allow_cli=true: require diagnostic_ref + backup_ref, reject risky metadata flags unless owner_decision exists;
-3. добавить отдельный worker daemon/cron tick with small max_items and no recursive scheduling;
-4. протестировать allow_cli=true на read-only подзадаче с timeout и PATH including /Users/admin/.local/bin;
-5. собрать result_summary в work_packages и owner-facing report;
-6. эскалировать owner_decisions только при рисках: деньги, данные, секреты, irreversible/prod.
+MVP-дорожка закрыта до controlled real execution:
+1. worker metrics добавлены в ответ `/api/parallel/worker/tick` и событие `worker_tick_summary`: executed/skipped/failed/duration/timeouts/guardrail_blocked;
+2. guardrails для `allow_cli=true` добавлены: обязательный `diagnostic_ref`, `backup_ref` при `requires_backup=true`, блокировка risky metadata flags без owner decision;
+3. добавлен безопасный runner `scripts/parallel_worker_tick.py` для ручного/launchd/cron tick; по умолчанию `ALLOW_PARALLEL_WORKER_CLI=false`, `max_items=1`;
+4. controlled allow_cli=true smoke выполнен на read-only подзадаче с timeout и PATH `/Users/admin/.local/bin`;
+5. `work_packages.result_summary` собирается из subtasks и даёт owner-facing report;
+6. `owner_decisions` создаются при `NEEDS_OWNER_DECISION` и при guardrail block.
+
+Последний controlled smoke:
+- guardrail block: `wp_20260512140259_21ee60be` → status=`needs_review`, `guardrail_blocked_count=1`;
+- real CLI read-only: `wp_20260512140259_334ae6ad` → status=`done`, mode=`hermes_cli`, executed=1, failed=0, timeout=0, duration≈4.23s;
+- result_summary: `BOUNDED_WORKER_OK read-only smoke completed.`
+
+Осталось для production-hardening, не для MVP:
+1. включать `scripts/parallel_worker_tick.py` в launchd только после выбора политики: dry-run automation или allow_cli automation;
+2. добавить UI-блок для worker metrics на dashboard;
+3. расширить CI на миграции + API smoke;
+4. добавить per-agent budgets/rate limits перед массовым allow_cli fan-out.
 
 Критерий качества владельца: владелец видит один work_package, статусы subtasks, события и результат, а не управляет каждым агентом вручную.
