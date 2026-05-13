@@ -77,6 +77,9 @@ General Agents enrichment fields:
 - `curator_agent_name`
 - `matched_skills`
 - `missing_skills`
+- `agent_activity_heat` (`0..3`, used by Kanban agent heatmap)
+- `agent_activity_state` (`hot`, `warm`, `cool`, `stale`, or `unknown`)
+- `agent_activity_age_minutes` when activity timestamp is known
 
 Acceptance:
 
@@ -101,6 +104,7 @@ Response shape:
 ```json
 {
   "threshold_minutes": 120,
+  "max_items": 50,
   "count": 0,
   "items": []
 }
@@ -122,6 +126,8 @@ Item fields can include:
 Acceptance:
 
 - Endpoint always returns a JSON object, not a raw list.
+- `threshold_minutes` is clamped to safe bounds (`5..10080`).
+- `max_items` is clamped to safe bounds (`1..200`) and echoed in the response.
 - `count == len(items)`.
 - Pepe dashboard block can render empty and non-empty states.
 

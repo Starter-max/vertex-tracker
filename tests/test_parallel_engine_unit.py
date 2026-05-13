@@ -52,6 +52,13 @@ def test_worker_safe_defaults_and_cli_guardrails_are_encoded():
     assert "DRY_RUN worker tick" in source
 
 
+def test_dispatcher_has_per_agent_concurrency_guardrail():
+    source = inspect.getsource(parallel_engine.dispatch_ready_subtasks)
+    assert "PARALLEL_ENGINE_MAX_RUNNING_PER_AGENT" in source
+    assert "per_agent_limit_reached" in source
+    assert "max(1, min(int(os.getenv" in source
+
+
 def test_parallel_api_routes_and_safety_clamps_are_encoded():
     route_paths = {getattr(route, "path", None) for route in main.app.routes}
     assert "/api/parallel/work-packages" in route_paths
@@ -101,6 +108,18 @@ def test_worker_guardrails_require_diagnostics_backup_and_owner_decision_for_ris
     assert unsafe["requires_owner_decision"] is True
 
 
+def test_parallel_worker_status_api_contract_is_encoded():
+    route_paths = {getattr(route, "path", None) for route in main.app.routes}
+    assert "/api/parallel/worker/status" in route_paths
+    assert hasattr(parallel_engine, "get_parallel_worker_status")
+    source = inspect.getsource(parallel_engine.get_parallel_worker_status)
+    assert "worker_tick_summary" in source
+    assert "subtasks_by_status" in source
+    assert "recent_events" in source
+    assert "pending_owner_decisions" in source
+    assert "cli_enabled_env" in source
+
+
 def test_owner_summary_and_worker_metrics_are_encoded():
     summary = parallel_engine.build_work_package_result_summary([
         {"title": "A", "status": "done", "result_summary": "alpha"},
@@ -121,15 +140,43 @@ def test_owner_summary_and_worker_metrics_are_encoded():
     assert "guardrail_blocked_count" in source
 
 
+def test_agent_stalls_endpoint_clamps_threshold_and_result_limit():
+    sig = inspect.signature(main.agent_stalls)
+    assert sig.parameters["threshold_minutes"].default == 120
+    assert sig.parameters["max_items"].default == 50
+
+    source = inspect.getsource(main.agent_stalls)
+    assert "safe_threshold = max(5, min(int(threshold_minutes or 120), 10080))" in source
+    assert "safe_limit = max(1, min(int(max_items or 50), 200))" in source
+    assert "LIMIT $2" in source
+    assert 'return {"threshold_minutes": safe_threshold' in source
+
+
+def test_kanban_enrichment_contract_is_encoded_without_n_plus_one_queries():
+    source = inspect.getsource(main.get_kanban)
+    assert "LEFT JOIN LATERAL" in source
+    assert "matched_skills" in source
+    assert "missing_skills" in source
+    assert "assigned_agent_status" in source
+    assert "curator_agent_name" in source
+    assert "agent_activity_heat" in source
+    assert "agent_activity_state" in source
+    assert "time_in_stage_hrs" in source
+
+
 if __name__ == "__main__":
     tests = [
         test_requested_subtasks_are_normalized_with_safe_defaults,
         test_default_decomposition_preserves_safety_flow,
         test_worker_safe_defaults_and_cli_guardrails_are_encoded,
+        test_dispatcher_has_per_agent_concurrency_guardrail,
         test_parallel_api_routes_and_safety_clamps_are_encoded,
         test_parallel_engine_seed_contains_virtual_agent_for_fk_safety,
         test_worker_guardrails_require_diagnostics_backup_and_owner_decision_for_risks,
+        test_parallel_worker_status_api_contract_is_encoded,
         test_owner_summary_and_worker_metrics_are_encoded,
+        test_agent_stalls_endpoint_clamps_threshold_and_result_limit,
+        test_kanban_enrichment_contract_is_encoded_without_n_plus_one_queries,
     ]
     for test in tests:
         test()

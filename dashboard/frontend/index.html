@@ -150,6 +150,7 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
 .kb-meta{font-size:10px;color:#bbb;display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
 .kb-badge{font-size:10px;padding:1px 6px;border-radius:10px;background:#f0f0f0;color:#888}
 .kb-time{font-size:10px;color:#bbb}.kb-time.warn{color:#e67e22}.kb-time.danger{color:#e74c3c}
+.agent-heat{display:flex;align-items:center;gap:4px;margin-top:6px;font-size:10px;color:#aaa}.heat-dot{width:7px;height:7px;border-radius:50%;background:#e5e5e5}.heat-dot.on.hot{background:#27ae60}.heat-dot.on.warm{background:#3498db}.heat-dot.on.cool{background:#e67e22}.heat-dot.on.stale{background:#e74c3c}
 .kb-add-btn{font-size:12px;padding:5px 14px;border:1px dashed #ccc;border-radius:7px;background:transparent;cursor:pointer;color:#aaa;margin-top:4px}
 .kb-modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;display:flex;align-items:center;justify-content:center}
 .kb-modal{background:#fff;border-radius:14px;padding:1.5rem;width:480px;max-width:90vw;max-height:85vh;overflow-y:auto}
@@ -247,6 +248,31 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
             <div class="lbl">Расходы 24ч</div>
             <div class="val" x-text="'$'+totalCost.toFixed(4)"></div>
             <div class="sub">все проекты</div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="sec-hdr">
+            <span class="sec-title">⚙️ Parallel worker metrics</span>
+            <button class="btn" @click="loadParallelWorkerStatus()">↻ worker</button>
+          </div>
+          <div class="sys" style="grid-template-columns:repeat(4,1fr);margin-bottom:10px">
+            <div class="sys-card"><div class="lbl">режим</div><div class="val" style="font-size:18px" x-text="parallelWorkerStatus.safe_default_mode || 'dry_run'"></div><div class="sub" x-text="parallelWorkerStatus.cli_enabled_env ? 'CLI env enabled' : 'CLI выключен безопасно'"></div></div>
+            <div class="sys-card"><div class="lbl">running</div><div class="val" x-text="parallelStatusCount('running')"></div><div class="sub">claimed subtasks</div></div>
+            <div class="sys-card"><div class="lbl">queued</div><div class="val" x-text="parallelStatusCount('queued')"></div><div class="sub">ожидают dispatcher</div></div>
+            <div class="sys-card"><div class="lbl">owner decisions</div><div class="val" :style="(parallelWorkerStatus.pending_owner_decisions?.length||0)>0?'color:#e67e22':''" x-text="parallelWorkerStatus.pending_owner_decisions?.length || 0"></div><div class="sub">pending guardrails</div></div>
+          </div>
+          <div class="tbl">
+            <div class="tbl-row">
+              <span>Последний worker tick</span>
+              <span style="color:#888;font-size:12px" x-text="parallelWorkerSummary()"></span>
+            </div>
+            <template x-for="e in (parallelWorkerStatus.recent_events || []).slice(0,3)" :key="e.id">
+              <div class="tbl-row">
+                <span x-text="e.event_type + ' · ' + (e.message || '')"></span>
+                <span style="color:#aaa;font-size:11px" x-text="relTime(e.created_at)"></span>
+              </div>
+            </template>
           </div>
         </div>
 
@@ -582,6 +608,11 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
                       <span x-show="card.assigned_agent_status" class="badge" :class="agentStatusClass(card.assigned_agent_status)" x-text="agentStatusLabel(card.assigned_agent_status)"></span>
                       <span x-show="card.curator_agent_id"> · куратор: </span><span class="link" @click.stop="openAgent(card.curator_agent_id)" x-text="card.curator_agent_name||card.curator_agent_id||''"></span>
                     </div>
+                    <div class="agent-heat" x-show="card.effective_assigned_agent_id">
+                      <span>активность агента</span>
+                      <template x-for="i in [1,2,3]" :key="i"><span class="heat-dot" :class="(i <= (card.agent_activity_heat||0) ? 'on ' : '') + (card.agent_activity_state||'stale')"></span></template>
+                      <span x-text="card.agent_activity_state||'unknown'"></span>
+                    </div>
                     <div x-show="(card.required_skills||[]).length">
                       <template x-for="sk in card.required_skills||[]" :key="sk"><span class="skill-chip" :class="(card.missing_skills||[]).includes(sk)?'missing':'matched'" @click.stop="openSkill(sk)" x-text="((card.missing_skills||[]).includes(sk)?'⚠ ':'✓ ')+sk"></span></template>
                     </div>
@@ -603,6 +634,11 @@ header{background:#fff;border-bottom:1px solid #e0e0e0;padding:0.75rem 1.25rem;d
               <div style="font-size:12px;color:#666;line-height:1.6" x-text="kanbanModal.description||'—'"></div>
               <div class="chat-card" style="background:#fafafa">
                 <div class="ga-line"><b>Исполнитель:</b> <span class="link" @click="openAgent(kanbanModal.effective_assigned_agent_id)" x-text="kanbanModal.assigned_agent_name||kanbanModal.effective_assigned_agent_id||'—'"></span> <span class="badge" :class="agentStatusClass(kanbanModal.assigned_agent_status)" x-text="agentStatusLabel(kanbanModal.assigned_agent_status)"></span></div>
+                <div class="agent-heat" x-show="kanbanModal.effective_assigned_agent_id">
+                  <b>Карта активности:</b>
+                  <template x-for="i in [1,2,3]" :key="i"><span class="heat-dot" :class="(i <= (kanbanModal.agent_activity_heat||0) ? 'on ' : '') + (kanbanModal.agent_activity_state||'stale')"></span></template>
+                  <span x-text="(kanbanModal.agent_activity_state||'unknown') + (kanbanModal.agent_activity_age_minutes!=null ? ' · '+kanbanModal.agent_activity_age_minutes+' мин назад' : '')"></span>
+                </div>
                 <div class="ga-line"><b>Куратор:</b> <span class="link" @click="openAgent(kanbanModal.curator_agent_id)" x-text="kanbanModal.curator_agent_name||kanbanModal.curator_agent_id||'—'"></span></div>
                 <div class="ga-line"><b>Следующий шаг:</b> <span x-text="kanbanModal.next_step||'—'"></span></div>
                 <div class="ga-line"><b>Обсуждение:</b> <span class="link" @click="openTaskDiscussion(kanbanModal)" x-text="kanbanModal.agent_discussion_id||'—'"></span></div>
@@ -715,6 +751,7 @@ function app() {
     agentCounts: {}, workroomKind: 'chat', workroomContent: '',
     boardMessages: [], boardInput: '', boardTarget: 'corp', boardLoading: false, agentFilterStatus:'all', agentFilterType:'all', agentFilterProject:'all', agentFilterSkill:'', agentStalls:{items:[],count:0}, currentAgentChatId:'global-agents-chat', agentChatTitle:'Общий чат агентов', agentChatMessages:[], agentChatInput:'', agentChatTaskTitle:'', agentChatTaskAgent:'', agentChatTaskPriority:'P2',
     knowledge: {items: [], summary: {}}, knowledgeFilter: 'all',
+    parallelWorkerStatus: {subtasks_by_status:{}, recent_events:[], pending_owner_decisions:[], latest_worker_metrics:null, safe_default_mode:'dry_run', cli_enabled_env:false},
     kanbanCards: [], kanbanLayer: 'strategic', kanbanFilter: 'all', kanbanProjectFilter: 'all', kanbanModal: null, draggedCardId: null, newCard: {title:'',description:'',card_type:'task',layer:'strategic',project_id:null,priority:'P2'},
     sections: [
       {type:'business', label:'Бизнес', icon:'💼'},
@@ -734,11 +771,12 @@ function app() {
       await this.loadAgentCounts();
       await this.loadBoardMessages();
       await this.loadGeneralAgents();
-      await this.loadStalls();
+        await this.loadStalls();
+      await this.loadParallelWorkerStatus();
     },
 
     async load() {
-      this.loading = true;
+this.loading = true;
       try {
         const [sysR, projR, costR] = await Promise.all([
           fetch('/api/system').then(r=>r.json()),
@@ -752,6 +790,7 @@ function app() {
         this.updateTimeAgo();
         this.alerts = projR.filter(p=>p.status==='error').map(p=>p.id.toUpperCase()+': проблема с агентом');
         await this.loadGeneralAgents();
+        await this.loadParallelWorkerStatus();
         if(this.detail) await this.loadDetail(this.detail.id);
       } catch(e) { this.alerts = ['ошибка загрузки']; }
       this.loading = false;
@@ -804,6 +843,16 @@ function app() {
       if(mins<60) return mins+' мин назад';
       const hrs = Math.floor(mins/60);
       return hrs<24 ? hrs+' ч назад' : Math.floor(hrs/24)+' дн назад';
+    },
+
+    async loadParallelWorkerStatus() {
+      this.parallelWorkerStatus = await fetch('/api/parallel/worker/status').then(r=>r.json()).catch(()=>this.parallelWorkerStatus);
+    },
+    parallelStatusCount(status) { return this.parallelWorkerStatus?.subtasks_by_status?.[status] || 0; },
+    parallelWorkerSummary() {
+      const m = this.parallelWorkerStatus?.latest_worker_metrics;
+      if(!m) return 'ещё нет worker_tick_summary';
+      return `${m.mode || 'dry_run'} · done ${m.executed_count||0} · skipped ${m.skipped_count||0} · failed ${m.failed_count||0} · ${m.duration_seconds||0}s`;
     },
 
     async loadSettings() {

@@ -45,6 +45,7 @@ Use this checklist before declaring the General Agents layer complete.
 - [ ] Kanban UI shows discussion/chat link where available.
 - [ ] Kanban UI shows owner-action flag when `requires_owner_action=true`.
 - [ ] Kanban UI shows blocked reason when `blocked_reason` exists.
+- [ ] Kanban UI shows agent activity heatmap/state (`agent_activity_heat`, `agent_activity_state`).
 
 ## 3. Agent list `/dashboard/agents`
 
@@ -129,7 +130,8 @@ Use this checklist before declaring the General Agents layer complete.
 - [ ] Agent status updates when a task completes.
 - [ ] Agent status updates when a task is paused.
 - [ ] Agent status updates when an error occurs.
-- [ ] `GET /api/agents/stalls` returns `{threshold_minutes,count,items}`.
+- [ ] `GET /api/agents/stalls` returns `{threshold_minutes,max_items,count,items}`.
+- [ ] Stalls query clamps unsafe `threshold_minutes` and `max_items` values.
 - [ ] Stalled important tasks create a warning/event or this is marked as MVP gap.
 - [ ] Pepe supervision UI shows the warning clearly.
 

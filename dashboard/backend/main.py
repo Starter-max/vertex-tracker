@@ -17,6 +17,7 @@ from parallel_engine import (
     update_subtask_status,
     dispatch_ready_subtasks,
     execute_running_subtasks,
+    get_parallel_worker_status,
     emit_event,
 )
 
@@ -397,6 +398,10 @@ async def api_parallel_worker_tick(body: ParallelWorkerTickBody = ParallelWorker
         timeout_seconds=safe_timeout,
     )
 
+@app.get("/api/parallel/worker/status")
+async def api_parallel_worker_status(work_package_id: Optional[str] = None):
+    return await get_parallel_worker_status(pool, REDIS_URL, work_package_id=work_package_id)
+
 @app.get("/api/parallel/work-packages/{work_package_id}")
 async def api_parallel_get(work_package_id: str):
     item = await get_work_package(pool, work_package_id)
@@ -477,6 +482,27 @@ async def get_kanban(layer: str = "strategic", project_id: str = None, card_type
         else:
             d['time_in_stage_hrs'] = 0
             d['time_in_stage'] = '—'
+        last_agent_activity = r.get('assigned_agent_last_activity_at') or r.get('last_agent_activity_at')
+        agent_activity_heat = 0
+        agent_activity_state = 'unknown'
+        if last_agent_activity:
+            activity_delta = now - last_agent_activity
+            activity_minutes = int(activity_delta.total_seconds() // 60)
+            if activity_minutes <= 15:
+                agent_activity_heat = 3
+                agent_activity_state = 'hot'
+            elif activity_minutes <= 60:
+                agent_activity_heat = 2
+                agent_activity_state = 'warm'
+            elif activity_minutes <= 180:
+                agent_activity_heat = 1
+                agent_activity_state = 'cool'
+            else:
+                agent_activity_heat = 0
+                agent_activity_state = 'stale'
+            d['agent_activity_age_minutes'] = activity_minutes
+        d['agent_activity_heat'] = agent_activity_heat
+        d['agent_activity_state'] = agent_activity_state
         cards.append(d)
     return cards
 
@@ -792,7 +818,9 @@ async def agent_counts_for_ui():
     return {r['project_id']: {"total": int(r['total']), "active": int(r['active'])} for r in rows}
 
 @app.get("/api/agents/stalls")
-async def agent_stalls(threshold_minutes: int = 120):
+async def agent_stalls(threshold_minutes: int = 120, max_items: int = 50):
+    safe_threshold = max(5, min(int(threshold_minutes or 120), 10080))
+    safe_limit = max(1, min(int(max_items or 50), 200))
     async with pool.acquire() as c:
         rows = await c.fetch("""
             SELECT a.id AS agent_id, a.name, a.status, a.current_task_id, a.last_activity_at,
@@ -803,8 +831,9 @@ async def agent_stalls(threshold_minutes: int = 120):
               AND a.status IN ('active','thinking')
               AND COALESCE(a.last_activity_at, a.active_since, NOW() - INTERVAL '100 years') < NOW() - ($1::text || ' minutes')::interval
             ORDER BY COALESCE(a.last_activity_at, a.active_since) ASC
-        """, str(threshold_minutes))
-    return {"threshold_minutes": threshold_minutes, "items": [_jsonable(r) for r in rows], "count": len(rows)}
+            LIMIT $2
+        """, str(safe_threshold), safe_limit)
+    return {"threshold_minutes": safe_threshold, "max_items": safe_limit, "items": [_jsonable(r) for r in rows], "count": len(rows)}
 
 @app.get("/api/agents/{agent_id}")
 async def get_agent(agent_id: str):

@@ -31,6 +31,7 @@ Dashboard: http://localhost:3000
 - POST /api/parallel/work-packages
 - POST /api/parallel/dispatcher/tick
 - POST /api/parallel/worker/tick
+- GET /api/parallel/worker/status
 - GET /api/parallel/work-packages/{work_package_id}
 - PATCH /api/parallel/subtasks/{subtask_id}/status
 - POST /api/parallel/work-packages/{work_package_id}/events
@@ -55,6 +56,7 @@ POST /api/parallel/dispatcher/tick
 → создаёт agent_instances rows для claim-only исполнения
 → обновляет linked kanban cards и agent_activity_log
 → пишет subtask_claimed/subtask_blocked в parallel_events + Redis
+→ дополнительно учитывает `PARALLEL_ENGINE_MAX_RUNNING_PER_AGENT` (default 1, clamp 1..5), чтобы один агент не получил массовый fan-out.
 
 Важно: launch_mode=claim_only. Dispatcher делает безопасный claim и observability, но не запускает тяжёлые Hermes subprocesses автоматически.
 
@@ -107,6 +109,14 @@ Bounded worker dry-run smoke:
 - final_status=done; both subtasks status=done; result_summary present; events included work_package_created, subtask_claimed, subtask_blocked, subtask_status, subtask_executed.
 - This confirms backend/data execution path only. It does not prove real Hermes subprocess execution because allow_cli=false was used deliberately for safety.
 
+## Production hardening
+
+Добавлено после MVP:
+- UI-блок `Parallel worker metrics` на dashboard overview: режим, queued/running, pending owner decisions, последний `worker_tick_summary`, последние события.
+- Backend endpoint `GET /api/parallel/worker/status` для owner-facing status snapshot.
+- Per-agent concurrency guardrail `PARALLEL_ENGINE_MAX_RUNNING_PER_AGENT` в dispatcher.
+- Безопасный launchd-шаблон без установки: `ops/launchd/com.digitalcorp.parallel-worker.dry-run.plist`; он запускает только dry-run runner раз в 300с и держит `ALLOW_PARALLEL_WORKER_CLI=false`.
+
 ## Следующий шаг
 
 MVP-дорожка закрыта до controlled real execution:
@@ -122,10 +132,10 @@ MVP-дорожка закрыта до controlled real execution:
 - real CLI read-only: `wp_20260512140259_334ae6ad` → status=`done`, mode=`hermes_cli`, executed=1, failed=0, timeout=0, duration≈4.23s;
 - result_summary: `BOUNDED_WORKER_OK read-only smoke completed.`
 
-Осталось для production-hardening, не для MVP:
-1. включать `scripts/parallel_worker_tick.py` в launchd только после выбора политики: dry-run automation или allow_cli automation;
-2. добавить UI-блок для worker metrics на dashboard;
-3. расширить CI на миграции + API smoke;
-4. добавить per-agent budgets/rate limits перед массовым allow_cli fan-out.
+Осталось только для перехода в полностью автоматизированный production mode:
+1. установить launchd job вручную после проверки dry-run policy (`launchctl bootstrap ...`), сейчас создан только шаблон;
+2. для allow_cli automation оставить обязательными diagnostic_ref/backup_ref/owner_decision_id и включать `ALLOW_PARALLEL_WORKER_CLI=true` только на выбранный интервал;
+3. расширить CI на отдельный контейнерный PostgreSQL/Redis smoke;
+4. добавить денежные per-agent budgets перед массовым allow_cli fan-out.
 
 Критерий качества владельца: владелец видит один work_package, статусы subtasks, события и результат, а не управляет каждым агентом вручную.

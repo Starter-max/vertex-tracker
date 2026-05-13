@@ -368,6 +368,21 @@ async def dispatch_ready_subtasks(pool, redis_url: str, work_package_id: Optiona
                     continue
                 if slots <= 0:
                     break
+                agent_id = st["assignee_agent_id"] or "parallel-engine"
+                per_agent_limit = max(1, min(int(os.getenv("PARALLEL_ENGINE_MAX_RUNNING_PER_AGENT", "1") or "1"), 5))
+                running_for_agent = await c.fetchval(
+                    "SELECT COUNT(*) FROM subtasks WHERE COALESCE(assignee_agent_id, 'parallel-engine')=$1 AND status='running'",
+                    agent_id,
+                )
+                if int(running_for_agent or 0) >= per_agent_limit:
+                    blocked.append({
+                        "id": st["id"],
+                        "work_package_id": wp["id"],
+                        "reason": "per_agent_limit_reached",
+                        "agent_id": agent_id,
+                        "per_agent_limit": per_agent_limit,
+                    })
+                    continue
                 if st["status"] == "blocked":
                     await c.execute(
                         "UPDATE subtasks SET status='queued', updated_at=NOW() WHERE id=$1 AND status='blocked'",
@@ -378,7 +393,6 @@ async def dispatch_ready_subtasks(pool, redis_url: str, work_package_id: Optiona
                         f"kc_{st['id']}",
                     )
                 instance_id = now_id("agentinst")
-                agent_id = st["assignee_agent_id"] or "parallel-engine"
                 display_agent_id = agent_id
                 await c.execute(
                     """
@@ -597,6 +611,74 @@ async def execute_running_subtasks(
         **worker_metrics,
         "executed": executed,
         "skipped": skipped,
+    }
+
+
+async def get_parallel_worker_status(pool, redis_url: str, work_package_id: Optional[str] = None) -> Dict[str, Any]:
+    """Owner-facing snapshot of parallel worker health and recent metrics."""
+    async with pool.acquire() as c:
+        subtasks_by_status_rows = await c.fetch(
+            """
+            SELECT status, COUNT(*)::int AS count
+            FROM subtasks
+            WHERE ($1::text IS NULL OR work_package_id=$1::text)
+            GROUP BY status
+            ORDER BY status
+            """,
+            work_package_id,
+        )
+        recent_events_rows = await c.fetch(
+            """
+            SELECT id,event_type,work_package_id,subtask_id,agent_id,severity,message,payload,created_at
+            FROM parallel_events
+            WHERE ($1::text IS NULL OR work_package_id=$1::text)
+            ORDER BY created_at DESC
+            LIMIT 20
+            """,
+            work_package_id,
+        )
+        pending_owner_decisions_rows = await c.fetch(
+            """
+            SELECT id,work_package_id,question,status,response,created_at
+            FROM owner_decisions
+            WHERE status='pending' AND ($1::text IS NULL OR work_package_id=$1::text)
+            ORDER BY created_at DESC
+            LIMIT 20
+            """,
+            work_package_id,
+        )
+        active_instances_rows = await c.fetch(
+            """
+            SELECT id,agent_id,work_package_id,subtask_id,status,launch_mode,started_at,finished_at,error_summary
+            FROM agent_instances
+            WHERE ($1::text IS NULL OR work_package_id=$1::text)
+            ORDER BY started_at DESC
+            LIMIT 20
+            """,
+            work_package_id,
+        )
+    recent_events = [_jsonable_row(r) for r in recent_events_rows]
+    latest_worker_metrics = None
+    for event in recent_events:
+        if event.get("event_type") == "worker_tick_summary":
+            payload = event.get("payload") or {}
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    payload = {"raw": payload}
+            latest_worker_metrics = {**payload, "event_id": event.get("id"), "created_at": event.get("created_at")}
+            break
+    return {
+        "ok": True,
+        "work_package_id": work_package_id,
+        "cli_enabled_env": os.getenv("ALLOW_PARALLEL_WORKER_CLI") == "true",
+        "safe_default_mode": "dry_run",
+        "subtasks_by_status": {r["status"]: r["count"] for r in subtasks_by_status_rows},
+        "latest_worker_metrics": latest_worker_metrics,
+        "recent_events": recent_events,
+        "pending_owner_decisions": [_jsonable_row(r) for r in pending_owner_decisions_rows],
+        "active_instances": [_jsonable_row(r) for r in active_instances_rows],
     }
 
 

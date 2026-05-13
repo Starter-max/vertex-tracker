@@ -34,7 +34,8 @@ Expected:
 - `/api/system` returns JSON.
 - `/api/agents` returns a list and includes `pepe`, `anton`, `katya`.
 - `/api/kanban` returns a list with at least one agent-linked card.
-- `/api/agents/stalls` returns an object with `threshold_minutes`, `count`, `items`.
+- `/api/agents/stalls` returns an object with `threshold_minutes`, `max_items`, `count`, `items`.
+- `/api/kanban` agent-linked cards include `agent_activity_heat` and `agent_activity_state` for the Kanban activity heatmap.
 
 ## Full local smoke
 
