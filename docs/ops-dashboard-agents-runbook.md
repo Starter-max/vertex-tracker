@@ -122,12 +122,13 @@ Expected endpoint shape:
 ```json
 {
   "threshold_minutes": 120,
+  "max_items": 50,
   "count": 0,
   "items": []
 }
 ```
 
-Frontend should not assume a raw list.
+`threshold_minutes` is clamped to 5..10080 and `max_items` is clamped to 1..200. Frontend should not assume a raw list.
 
 Smoke:
 
@@ -205,7 +206,7 @@ html = Path('dashboard/frontend/index.html').read_text()
 print('templates_open', html.count('<template '))
 print('templates_close', html.count('</template>'))
 assert html.count('<template ') == html.count('</template>')
-for marker in ['Генеральные агенты','agentFilterType','agentFilterProject','Пепе видит зависания','openAgentDirectChat']:
+for marker in ['Генеральные агенты','agentFilter','Пепе видит зависания','openAgentDirectChat','agent_activity_heat']:
     assert marker in html, marker
 print('OK frontend markers')
 PY
